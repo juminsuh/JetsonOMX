@@ -15,6 +15,14 @@
 # limitations under the License.
 #
 # Author: Wonho Yun, Sungho Woo, Woojin Wie, Junha Cha
+#
+# VLA Controller 사용 참고:
+#   - 이 Launch 파일은 카메라 이름(name)을 namespace로 사용합니다.
+#   - 기본값은 'camera1'이므로, 기본적으로 /camera1/image_raw 토픽으로 publish됩니다.
+#   - omx_vla_controller의 VLA Dummy Node와 함께 사용하려면:
+#     ros2 launch open_manipulator_bringup camera_usb_cam.launch.py name:=camera
+#   - 또는 통합 Launch 파일 사용 (권장):
+#     ros2 launch omx_vla_controller vla_dummy_test.launch.py
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
