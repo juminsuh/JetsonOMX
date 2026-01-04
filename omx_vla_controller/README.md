@@ -91,7 +91,7 @@ ros2 launch omx_vla_controller simple_controller.launch.py \
     use_dummy_camera:=true
 ```
 
-**실제 카메라 사용 시:**
+**실제 로봇팔 + USB 카메라 사용 시:**
 ```bash
 # 더미 카메라 비활성화
 ros2 launch omx_vla_controller simple_controller.launch.py \
@@ -122,6 +122,222 @@ ros2 run omx_vla_controller dummy_camera
 ```bash
 ros2 launch open_manipulator_bringup camera_usb_cam.launch.py name:=camera
 ```
+
+## 실제 로봇팔 + USB 카메라 사용 매뉴얼
+
+실제 OMX 로봇팔과 USB 카메라를 연결하여 사용하는 방법입니다.
+
+### 사전 준비사항
+
+1. **하드웨어 연결 확인**
+   - OMX 로봇팔 USB 연결 확인 (`/dev/ttyACM0` 또는 해당 포트)
+   - USB 카메라 연결 확인 (`/dev/video0` 또는 해당 디바이스)
+   
+2. **디바이스 권한 확인**
+   ```bash
+   # USB 카메라 확인
+   ls -l /dev/video*
+   
+   # 로봇팔 시리얼 포트 확인
+   ls -l /dev/ttyACM*
+   
+   # 권한이 없으면 사용자를 dialout 그룹에 추가
+   sudo usermod -a -G dialout $USER
+   sudo usermod -a -G video $USER
+   # 로그아웃 후 다시 로그인 필요
+   ```
+
+3. **Docker 컨테이너 실행** (Docker 사용 시)
+   ```bash
+   cd docker
+   docker compose up -d
+   
+   # 컨테이너 접속
+   docker exec -it open_manipulator bash
+   ```
+
+4. **FastAPI 서버 실행** (별도 터미널)
+   ```bash
+   cd fastapi
+   docker compose up -d
+   # 또는 직접 실행
+   python3 api_server.py
+   ```
+
+### 단계별 실행 방법
+
+#### 1단계: 로봇팔 제어 시스템 실행
+
+**터미널 1: 로봇팔 제어 노드 실행**
+```bash
+# Docker 컨테이너 내부 (또는 호스트에서)
+source /opt/ros/jazzy/setup.bash
+source /root/ros2_ws/install/setup.bash  # 빌드한 경우
+
+# 실제 로봇팔 제어 시스템 실행
+ros2 launch open_manipulator_bringup omx_f_control.launch.py
+```
+
+**참고:** 
+- 시뮬레이션 없이 실제 하드웨어 사용: `use_sim:=false` (기본값)
+- 시리얼 포트가 다르면: `port_name:=/dev/ttyACM1`
+
+#### 2단계: USB 카메라 실행
+
+**터미널 2: USB 카메라 노드 실행**
+```bash
+# 같은 컨테이너 내부 또는 호스트에서
+source /opt/ros/jazzy/setup.bash
+
+# USB 카메라 실행
+ros2 launch open_manipulator_bringup camera_usb_cam.launch.py \
+    name:=camera \
+    video_device:=/dev/video0
+
+# 카메라 디바이스가 다른 경우
+# ros2 launch open_manipulator_bringup camera_usb_cam.launch.py \
+#     name:=camera \
+#     video_device:=/dev/video1
+```
+
+**카메라 토픽 확인:**
+```bash
+# 카메라 이미지 토픽 확인
+ros2 topic list | grep camera
+
+# 카메라 이미지 확인 (이미지가 제대로 나오는지 확인)
+ros2 topic echo /camera/image_raw --no-arr
+```
+
+#### 3단계: Simple Controller 실행
+
+**터미널 3: Simple Controller 실행**
+```bash
+# 같은 컨테이너 내부 또는 호스트에서
+source /opt/ros/jazzy/setup.bash
+source /root/ros2_ws/install/setup.bash
+
+# Simple Controller 실행 (더미 카메라 비활성화)
+ros2 launch omx_vla_controller simple_controller.launch.py \
+    joint_positions:="[0.0, -1.57, 1.57, 1.57, 0.0]" \
+    api_url:=http://localhost:8080/api/camera \
+    use_dummy_camera:=false
+```
+
+### 전체 실행 예시 (Docker 사용 시)
+
+```bash
+# 1. Docker 컨테이너 실행
+cd docker
+docker compose up -d
+
+# 2. FastAPI 서버 실행 (별도 터미널)
+cd ../fastapi
+docker compose up -d
+
+# 3. 컨테이너 접속
+docker exec -it open_manipulator bash
+source /opt/ros/jazzy/setup.bash
+source /root/ros2_ws/install/setup.bash
+
+# 4. 로봇팔 제어 시스템 실행 (터미널 1)
+ros2 launch open_manipulator_bringup omx_f_control.launch.py
+
+# 5. USB 카메라 실행 (터미널 2 - 새 터미널)
+docker exec -it open_manipulator bash
+source /opt/ros/jazzy/setup.bash
+ros2 launch open_manipulator_bringup camera_usb_cam.launch.py name:=camera video_device:=/dev/video0
+
+# 6. Simple Controller 실행 (터미널 3 - 새 터미널)
+docker exec -it open_manipulator bash
+source /opt/ros/jazzy/setup.bash
+source /root/ros2_ws/install/setup.bash
+ros2 launch omx_vla_controller simple_controller.launch.py \
+    joint_positions:="[0.0, -1.57, 1.57, 1.57, 0.0]" \
+    api_url:=http://localhost:8080/api/camera \
+    use_dummy_camera:=false
+```
+
+### 문제 해결
+
+#### USB 카메라가 인식되지 않는 경우
+
+```bash
+# 카메라 디바이스 확인
+ls -l /dev/video*
+
+# USB 장치 확인
+lsusb
+
+# v4l2로 카메라 확인
+v4l2-ctl --list-devices
+
+# 카메라 테스트 (FFmpeg 설치 필요)
+ffmpeg -f v4l2 -i /dev/video0 -frames:v 1 test.jpg
+```
+
+#### 로봇팔이 연결되지 않는 경우
+
+```bash
+# 시리얼 포트 확인
+ls -l /dev/ttyACM* /dev/ttyUSB*
+
+# 포트 권한 확인
+groups | grep dialout
+
+# 포트가 없으면 USB 케이블 재연결
+# dmesg로 최근 USB 연결 로그 확인
+dmesg | tail -20
+```
+
+#### 카메라 토픽이 보이지 않는 경우
+
+```bash
+# 모든 토픽 확인
+ros2 topic list
+
+# 카메라 노드 확인
+ros2 node list | grep camera
+
+# 카메라 노드 정보 확인
+ros2 node info /camera/camera_node
+
+# 카메라 재시작
+# Ctrl+C로 중지 후 다시 실행
+```
+
+#### Docker 컨테이너에서 USB 장치 접근 문제
+
+Docker Compose 파일에 USB 장치 마운트 추가 필요:
+
+```yaml
+# docker/docker-compose.yml 수정 예시
+services:
+  open_manipulator:
+    devices:
+      - /dev/ttyACM0:/dev/ttyACM0  # 로봇팔
+      - /dev/video0:/dev/video0    # USB 카메라
+    privileged: true  # USB 장치 접근을 위해 필요할 수 있음
+```
+
+### 주의사항
+
+1. **실행 순서 중요**
+   - 로봇팔 제어 시스템 → USB 카메라 → Simple Controller 순서로 실행
+   - 각 노드가 정상적으로 실행되는지 확인 후 다음 단계 진행
+
+2. **토픽 이름 확인**
+   - Simple Controller는 기본적으로 `/camera/image_raw` 토픽을 구독
+   - 카메라 launch 파일의 `name` 파라미터에 따라 토픽 이름이 달라질 수 있음
+   - `name:=camera`로 실행하면 `/camera/image_raw` 토픽 사용
+
+3. **API 서버 연결**
+   - FastAPI 서버가 실행 중이어야 Simple Controller가 이미지를 전송할 수 있음
+   - `localhost:8080` 또는 호스트 IP 주소로 접근 가능한지 확인
+
+4. **하드웨어 안전**
+   - 로봇팔 작동 시 주변에 사람이 없는지 확인
+   - 처음 실행 시 조인트 위치를 안전한 범위로 설정
 
 VLA Dummy 노드만 실행:
 ```bash
