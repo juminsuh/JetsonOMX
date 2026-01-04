@@ -83,10 +83,24 @@ ros2 launch omx_vla_controller vla_dummy_test.launch.py \
 
 5개 joint를 const 값으로 이동 → Gripper 닫기/열기 → 카메라 이미지 API 전송:
 
+**가제보 시뮬레이션용 (더미 카메라 포함):**
 ```bash
 ros2 launch omx_vla_controller simple_controller.launch.py \
     joint_positions:="[0.0, -1.57, 1.57, 1.57, 0.0]" \
-    api_url:=http://localhost:8080/api/camera
+    api_url:=http://localhost:8080/api/camera \
+    use_dummy_camera:=true
+```
+
+**실제 카메라 사용 시:**
+```bash
+# 더미 카메라 비활성화
+ros2 launch omx_vla_controller simple_controller.launch.py \
+    joint_positions:="[0.0, -1.57, 1.57, 1.57, 0.0]" \
+    api_url:=http://localhost:8080/api/camera \
+    use_dummy_camera:=false
+
+# 별도 터미널에서 실제 카메라 실행
+ros2 launch open_manipulator_bringup camera_usb_cam.launch.py name:=camera
 ```
 
 또는 개별 노드로 실행:
@@ -99,7 +113,12 @@ ros2 run omx_vla_controller simple_controller \
 
 ### 5. 개별 노드 실행
 
-카메라 노드만 실행:
+**더미 카메라 노드 (시뮬레이션용):**
+```bash
+ros2 run omx_vla_controller dummy_camera
+```
+
+**실제 카메라 노드:**
 ```bash
 ros2 launch open_manipulator_bringup camera_usb_cam.launch.py name:=camera
 ```
@@ -215,4 +234,5 @@ if __name__ == '__main__':
 
 - 기존 카메라 Launch 파일: `open_manipulator_bringup/launch/camera_usb_cam.launch.py`
 - 표준 ROS 2 컨트롤러: `/arm_controller/joint_trajectory` 토픽을 구독하여 로봇 제어
+
 

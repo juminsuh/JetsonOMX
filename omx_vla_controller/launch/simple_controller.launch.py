@@ -14,6 +14,7 @@
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -21,6 +22,21 @@ from launch_ros.actions import Node
 def generate_launch_description():
     # Launch arguments
     declared_arguments = [
+        DeclareLaunchArgument(
+            'use_dummy_camera',
+            default_value='true',
+            description='Use dummy camera node (for simulation)',
+        ),
+        DeclareLaunchArgument(
+            'dummy_camera_width',
+            default_value='640',
+            description='Dummy camera image width',
+        ),
+        DeclareLaunchArgument(
+            'dummy_camera_height',
+            default_value='480',
+            description='Dummy camera image height',
+        ),
         DeclareLaunchArgument(
             'joint_positions',
             default_value='[0.0, -1.57, 1.57, 1.57, 0.0]',
@@ -64,6 +80,9 @@ def generate_launch_description():
     ]
 
     # Launch configurations
+    use_dummy_camera = LaunchConfiguration('use_dummy_camera')
+    dummy_camera_width = LaunchConfiguration('dummy_camera_width')
+    dummy_camera_height = LaunchConfiguration('dummy_camera_height')
     joint_positions = LaunchConfiguration('joint_positions')
     api_url = LaunchConfiguration('api_url')
     api_timeout = LaunchConfiguration('api_timeout')
@@ -72,6 +91,22 @@ def generate_launch_description():
     gripper_open_pos = LaunchConfiguration('gripper_open_pos')
     joint_move_duration = LaunchConfiguration('joint_move_duration')
     gripper_move_duration = LaunchConfiguration('gripper_move_duration')
+
+    # Dummy Camera Node (시뮬레이션용)
+    # 가제보 시뮬레이션에서 사용하는 더미 카메라
+    dummy_camera_node = Node(
+        package='omx_vla_controller',
+        executable='dummy_camera',
+        name='dummy_camera',
+        output='screen',
+        condition=IfCondition(use_dummy_camera),
+        parameters=[{
+            'image_width': dummy_camera_width,
+            'image_height': dummy_camera_height,
+            'frame_rate': 30.0,
+            'image_topic': image_topic,
+        }]
+    )
 
     # Simple Controller Node
     simple_controller_node = Node(
@@ -91,5 +126,8 @@ def generate_launch_description():
         }]
     )
 
-    return LaunchDescription(declared_arguments + [simple_controller_node])
+    return LaunchDescription(
+        declared_arguments + 
+        [dummy_camera_node, simple_controller_node]
+    )
 
