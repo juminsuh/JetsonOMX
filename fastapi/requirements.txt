@@ -2,5 +2,5 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
 opencv-python-headless==4.8.1.78
-numpy>=1.26.0
+numpy>=1.26.0,<2.0.0
 
