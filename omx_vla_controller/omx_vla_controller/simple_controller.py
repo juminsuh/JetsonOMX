@@ -78,6 +78,8 @@ class SimpleControllerNode(Node):
         self.joint_move_complete = False
         self.gripper_close_complete = False
         self.gripper_open_complete = False
+        self.joint_timer = None  # Joint 이동 완료 타이머
+        self.retry_timer = None  # 재시도 타이머
 
         self.get_logger().info("🚀 Simple Controller Node Started!")
         self.get_logger().info(f"📡 API URL: {self.api_url}")
@@ -106,11 +108,16 @@ class SimpleControllerNode(Node):
         self.state = 'moving_joints'
         self.get_logger().info("Joint trajectory published")
 
-        # Joint 이동 완료 대기 (타이머 사용)
-        self.create_timer(self.joint_move_duration + 0.5, self.on_joint_move_complete, oneshot=True)
+        # Joint 이동 완료 대기 (타이머 사용 - oneshot 구현)
+        self.joint_timer = self.create_timer(self.joint_move_duration + 0.5, self.on_joint_move_complete)
 
     def on_joint_move_complete(self):
         """Joint 이동 완료 후 Gripper 닫기"""
+        # 타이머 취소 (oneshot 효과)
+        if self.joint_timer is not None:
+            self.joint_timer.cancel()
+            self.joint_timer = None
+        
         self.get_logger().info("✅ Joint movement completed. Closing gripper...")
         self.close_gripper()
 
@@ -208,10 +215,30 @@ class SimpleControllerNode(Node):
         """카메라 이미지를 API 서버로 전송"""
         if self.latest_image is None:
             self.get_logger().warn("⚠️  No camera image received yet. Waiting...")
-            # 이미지가 없으면 잠시 후 재시도
-            self.create_timer(1.0, lambda: self.send_camera_to_api(), oneshot=True)
+            # 이미지가 없으면 잠시 후 재시도 (타이머가 없을 때만 생성)
+            if self.retry_timer is None:
+                self.retry_timer = self.create_timer(1.0, self._retry_send_camera_once)
             return
-
+        
+        # 이미지가 있으면 재시도 타이머 취소
+        if self.retry_timer is not None:
+            self.retry_timer.cancel()
+            self.retry_timer = None
+        
+        self._send_camera_to_api_internal()
+    
+    def _retry_send_camera_once(self):
+        """재시도용 내부 함수 (한 번만 실행)"""
+        # 타이머 취소
+        if self.retry_timer is not None:
+            self.retry_timer.cancel()
+            self.retry_timer = None
+        
+        # 다시 시도
+        self.send_camera_to_api()
+    
+    def _send_camera_to_api_internal(self):
+        """카메라 이미지를 API 서버로 전송 (내부 구현)"""
         self.get_logger().info(f"Sending camera image to {self.api_url}")
 
         try:
