@@ -25,20 +25,3 @@ services:
       - ../:/root/ros2_ws/src/open_manipulator/
     privileged: true
     command: bash
-
-  api_server:
-    container_name: api_server
-    build:
-      context: ./api_server
-      dockerfile: Dockerfile
-    image: omx-api-server:latest
-    network_mode: host
-    environment:
-      - PYTHONUNBUFFERED=1
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
