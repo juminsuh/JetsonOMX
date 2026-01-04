@@ -1,0 +1,19 @@
+services:
+  fastapi_server:
+    container_name: fastapi_server
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: omx-fastapi:latest
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
