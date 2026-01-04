@@ -29,13 +29,16 @@ services:
   api_server:
     container_name: api_server
     build:
-      context: .
+      context: ./api_server
       dockerfile: Dockerfile
-    image: robotis/open-manipulator:latest
+    image: omx-api-server:latest
     network_mode: host
     environment:
       - PYTHONUNBUFFERED=1
-    command: python3 /root/api_server.py
-    depends_on:
-      - open_manipulator
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
