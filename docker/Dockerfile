@@ -18,9 +18,20 @@ RUN apt-get update && apt-get install -y \
     libglfw3-dev \
     ros-${ROS_DISTRO}-image-transport-plugins \
     ros-${ROS_DISTRO}-usb-cam \
+    python3-pip \
     vim \
     nano \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies for API server
+COPY requirements_api.txt /tmp/requirements_api.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements_api.txt && \
+    rm /tmp/requirements_api.txt
+
+# Copy API server script and startup script
+COPY api_server.py /root/api_server.py
+COPY start_api_server.sh /root/start_api_server.sh
+RUN chmod +x /root/api_server.py /root/start_api_server.sh
 
 ENV COLCON_WS=/root/ros2_ws
 WORKDIR ${COLCON_WS}

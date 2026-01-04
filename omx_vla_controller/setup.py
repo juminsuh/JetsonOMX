@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'vla_dummy = omx_vla_controller.vla_dummy:main',
             'vla_bridge = omx_vla_controller.vla_bridge:main',
+            'simple_controller = omx_vla_controller.simple_controller:main',
         ],
     },
 )

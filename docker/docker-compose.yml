@@ -25,3 +25,17 @@ services:
       - ../:/root/ros2_ws/src/open_manipulator/
     privileged: true
     command: bash
+
+  api_server:
+    container_name: api_server
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: robotis/open-manipulator:latest
+    network_mode: host
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python3 /root/api_server.py
+    depends_on:
+      - open_manipulator
+    restart: unless-stopped

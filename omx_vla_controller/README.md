@@ -17,10 +17,12 @@ omx_vla_controller/
 ├── omx_vla_controller/
 │   ├── __init__.py
 │   ├── vla_dummy.py          # Dummy VLA 노드 (테스트용)
-│   └── vla_bridge.py         # VLA Bridge 노드 (원격 API 연동)
+│   ├── vla_bridge.py         # VLA Bridge 노드 (원격 API 연동)
+│   └── simple_controller.py  # 간단한 핵심 동작 노드
 ├── launch/
 │   ├── vla_dummy_test.launch.py  # Dummy 테스트 Launch 파일
-│   └── vla_full_system.launch.py # 전체 시스템 Launch 파일
+│   ├── vla_full_system.launch.py # 전체 시스템 Launch 파일
+│   └── simple_controller.launch.py # 간단한 컨트롤러 Launch 파일
 ├── package.xml
 ├── setup.py
 ├── README.md
@@ -77,7 +79,25 @@ ros2 launch omx_vla_controller vla_dummy_test.launch.py \
     image_height:=240
 ```
 
-### 4. 개별 노드 실행
+### 4. Simple Controller 실행 (핵심 동작만)
+
+5개 joint를 const 값으로 이동 → Gripper 닫기/열기 → 카메라 이미지 API 전송:
+
+```bash
+ros2 launch omx_vla_controller simple_controller.launch.py \
+    joint_positions:="[0.0, -1.57, 1.57, 1.57, 0.0]" \
+    api_url:=http://localhost:8080/api/camera
+```
+
+또는 개별 노드로 실행:
+```bash
+ros2 run omx_vla_controller simple_controller \
+    --ros-args \
+    -p joint_positions:="[0.0, -1.57, 1.57, 1.57, 0.0]" \
+    -p api_url:=http://localhost:8080/api/camera
+```
+
+### 5. 개별 노드 실행
 
 카메라 노드만 실행:
 ```bash
