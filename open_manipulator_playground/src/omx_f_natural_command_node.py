@@ -9,24 +9,8 @@ from control_msgs.msg import GripperCommand as GripperCommandMsg
 from rclpy.action import ActionClient
 from geometry_msgs.msg import PoseStamped
 from moveit_msgs.srv import GetPositionIK, GetCartesianPath
+from kinematics.Kinematics import Kinematic
 
-'''
-JointTrajectoryPoint class : 하나의 시점에서 로봇들의 관절이 어떤 상태가 되어야하는지를 담는 클래스
-JointTrajectoryPoint(
-    positions=[1.0, 0.5],
-    time_from_start=Duration(seconds=2.0)
-) => 2초 뒤에 J1 = 1.0, J2 = 0.5로 가라 지시
-
-JointTrajectory class : JointTrajectoryPoint 여러 개를 모아놓은 전체 로봇 움직임 경로(Trajectory).
-JointTrajectory(
-    joint_names=["joint1", "joint2"],
-    points=[
-        JointTrajectoryPoint(positions=[0.0, 0.0], time_from_start=0.0),
-        JointTrajectoryPoint(positions=[0.5, 0.2], time_from_start=1.0),
-        JointTrajectoryPoint(positions=[1.0, 0.5], time_from_start=2.0),
-    ]
-) => o초 뒤, 1초뒤, 2초뒤 각각 J1, J2를 아래 리스트에 따라 움직여라
-'''
 # 링크 길이들 (미터 단위)
 L2 = 0.128
 L3 = 0.124
@@ -96,6 +80,8 @@ class NaturalCommandNode(Node):
 
         # 홈 포즈 (관절 각도 라디안)
         self.home_pose = [0.0, -1.57, 1.57, 1.57, 0.0 ]
+        # forward kinematics 모델 설정
+        self.forward_kinematics = Kinematic()
 
     def process_command(self, cmd):
         try:
@@ -439,29 +425,53 @@ class NaturalCommandNode(Node):
             code = res.error_code.val if res else -1
             self.get_logger().error(f"IK computation failed (code: {code})")
             
-    def move_with_ik(self, x, y, z, roll=0.0, pitch=0.0, yaw=0.0):
-
-        # delta_h = L_GRIPPER * math.sin(yaw)
-        # delta_j = math.asin(delta_h / L4)
+    def move_with_ik(self, dx, dy, dz, roll=0.0, pitch=0.0, yaw=0.0):
         
-        # 현재 위치 가져오기
-        px = self.current_ee_pose.pose.position.x
-        py = self.current_ee_pose.pose.position.y
+        # 현재 위치 가져오고 forward kinematics 해서 xyz 갱신
+        current_joint = [self.current_joint1_pos,
+                         self.current_joint2_pos,
+                         self.current_joint3_pos,
+                         self.current_joint4_pos,
+                         self.current_joint5_pos,
+                         0.0 # gripper 값 (생략)
+                         ]
+        
+        """
+        fk_position 구조
+        [ ex.x  ey.x  ez.x px]
+        [ ex.y  ey.y  ez.y py]
+        [ ex.z  ey.z  ez.z pz]
+        [  0     0     0   1 ]
+        px py pz만 따서 사용하고 만약에 openVLA output이 ee(end effector) 기준이면
+        ex.x ey.x ... 이거 사용해서 변환 후 더해야 함
+        """
+        fk_position = self.forward_kinematics.forward_kinematics(current_joint)
+        current_x = fk_position[0][3] / 100.0 # cm -> m
+        current_y = fk_position[1][3] / 100.0
+        current_z = fk_position[2][3] / 100.0
 
-        # dx =  (px * math.cos(delta_j) - py * math.sin(delta_j)) - px
-        # dy =  (px * math.sin(delta_j) + py * math.cos(delta_j)) - py
+        target_x = current_x + float(dx)
+        target_y = current_y + float(dy)
+        target_z = current_z + float(dz)
 
-        # -------------------------------
-        # 보정된 목표 위치
-        # -------------------------------
+        self.get_logger().info(
+            f"🎯 [FK Request] current =({current_x:.3f}, {current_y:.3f}, {current_z:.3f}), " 
+            f"target x={target_x:.3f}, target y={target_y:.3f}, target z={target_z:.3f}"
+        )
+
         pose = PoseStamped()
         pose.header.frame_id = "world"
-        pose.pose.position.x = self.current_ee_pose.pose.position.x + float(x) #+ dx
-        pose.pose.position.y = self.current_ee_pose.pose.position.y + float(y) #+ dy
-        pose.pose.position.z = self.current_ee_pose.pose.position.z + float(z)
+        pose.pose.position.x = target_x
+        pose.pose.position.y = target_y
+        pose.pose.position.z = target_z
+
+        pose.pose.orientation.x = 0.0
+        pose.pose.orientation.y = 0.0
+        pose.pose.orientation.z = 0.0
         pose.pose.orientation.w = 1.0
+        
         self.get_logger().info(
-            f"🎯 [IK Request] Pos=({x:.3f}, {y:.3f}, {z:.3f}), " 
+            f"🎯 [IK Request] Pos=({dx:.3f}, {dy:.3f}, {dz:.3f}), " 
             f"Pitch={pitch:.3f}, Yaw={yaw:.3f}, Roll(separate)={roll:.3f}"
         )
         
@@ -517,7 +527,7 @@ class NaturalCommandNode(Node):
                 self.current_joint4_pos,
                 self.current_joint5_pos,
             ]
-
+            
             self.get_logger().info(
                 f"📐 Joint angles: J1={joint_list[0]:.3f}, J2={joint_list[1]:.3f}, "
                 f"J3={joint_list[2]:.3f}, J4={joint_list[3]:.3f}, J5={joint_list[4]:.3f}"
