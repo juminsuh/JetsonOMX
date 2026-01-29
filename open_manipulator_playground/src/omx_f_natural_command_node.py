@@ -11,6 +11,8 @@ from geometry_msgs.msg import PoseStamped
 from moveit_msgs.srv import GetPositionIK, GetCartesianPath, GetPositionFK
 from tf2_ros import Buffer, TransformListener
 from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
+from sensor_msgs.msg import JointState
+from moveit_msgs.msg import RobotState
 
 # 링크 길이들 (미터 단위)
 L2 = 0.128
@@ -100,7 +102,7 @@ class NaturalCommandNode(Node):
                 self.send_ik_request(x, y, z)
                 return
 
-            if action == "move":
+            if action == "move_ik":
                 dx, dy, dz = cmd["xyz"]
                 roll, pitch, yaw = cmd["rpy"]
                 self.move_with_cartesian(dx, dy, dz, roll, pitch, yaw)
@@ -384,6 +386,12 @@ class NaturalCommandNode(Node):
         self.get_logger().info("Initialization complete")
 
     def send_ik_request(self, x, y, z):
+        seed_state = RobotState()
+        seed_js = JointState()
+        seed_js.name = ['joint1','joint2','joint3','joint4']
+        seed_js.position = [0.0, 0.0, 0.0, 0.0]  # ← 네가 원하는 seed
+        seed_state.joint_state = seed_js
+        
         pose = PoseStamped()
         pose.header.frame_id = "world"
         pose.pose.position.x = float(x)
@@ -391,6 +399,7 @@ class NaturalCommandNode(Node):
         pose.pose.position.z = float(z)
         pose.pose.orientation.w = 1.0
         req = GetPositionIK.Request()
+        req.ik_request.robot_state = seed_state
         req.ik_request.group_name = "arm"
         req.ik_request.ik_link_name = "end_effector_link"
         req.ik_request.pose_stamped = pose
@@ -463,9 +472,9 @@ class NaturalCommandNode(Node):
             f"🎯 Cartesian-like IK target = "
             f"({target_x:.3f}, {target_y:.3f}, {target_z:.3f})"
         )
-
+        
         return self.send_ik_request(target_x, target_y, target_z)
-
+        
 
     def check_joint_limits(self, joint_values: dict) -> bool:
         for name, value in joint_values.items():
