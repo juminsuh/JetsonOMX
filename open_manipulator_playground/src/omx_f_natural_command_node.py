@@ -83,7 +83,7 @@ class NaturalCommandNode(Node):
         self.get_logger().info("Bridge mode active (no LLM parser, JSON directly expected)")
 
         # --- VLA Configuration ---
-        self.declare_parameter('vla_api_url', 'http://localhost:8080/api/vla/infer')
+        self.declare_parameter('vla_api_url', 'http://100.82.52.106:8080/api/vla/infer')
         self.declare_parameter('vla_api_timeout', 10.0)
         self.declare_parameter('vla_image_topic', '/camera/image_raw')
         self.declare_parameter('vla_prompt', 'Move the robot arm to pick up the object')
