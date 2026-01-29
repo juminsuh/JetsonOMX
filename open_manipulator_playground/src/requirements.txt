@@ -1,15 +1,8 @@
 flask
 flask-cors
 requests
-torch
-torchvision
-transformers
 fastapi
 uvicorn
 pydantic
 opencv-python-headless
 pillow
-tensorflow-cpu
-accelerate
-bitsandbytes
-flash-attn
