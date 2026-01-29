@@ -8,15 +8,13 @@ from control_msgs.action import GripperCommand
 from control_msgs.msg import GripperCommand as GripperCommandMsg
 from rclpy.action import ActionClient
 from geometry_msgs.msg import PoseStamped
-from moveit_msgs.srv import GetPositionIK, GetCartesianPath
-from kinematics.Kinematics import Kinematic
+from moveit_msgs.srv import GetPositionIK, GetCartesianPath, GetPositionFK
+from tf2_ros import Buffer, TransformListener
+from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
 
 # 링크 길이들 (미터 단위)
 L2 = 0.128
 L3 = 0.124
-L_GRIPPER = 0.126
-L4 = 0.165 # 추정치
-d5 = 0.09193 
 
 # 연속 회전에 관련된 상수들
 KEEP_ROTATE_SPEED_DEG_S = 10.0 # 회전 속도
@@ -46,13 +44,15 @@ class NaturalCommandNode(Node):
         # IK(역기구학) 계산과 카르테시안 경로 계산을 위한 서비스 클라이언트
         self.ik_client = self.create_client(GetPositionIK, '/compute_ik')
         self.cartesian_client = self.create_client(GetCartesianPath, '/compute_cartesian_path')
+        self.fk_client = self.create_client(GetPositionFK, '/compute_fk')
 
         # ik 서비스가 준비될 때까지 대기 (동기 로그 출력)
         while not self.ik_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Waiting for /compute_ik service...')
         while not self.cartesian_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Waiting for /compute_cartesian_path service...')
-
+        while not self.fk_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Waiting for /compute_fk service...')
         # 현재 관절 상태(라디안) 초기값 => joint5 는 그리퍼 회전인데 적용 안 한 것같 음
         self.current_joint1_pos = 0.0
         self.current_joint2_pos = 0.0
@@ -80,8 +80,6 @@ class NaturalCommandNode(Node):
 
         # 홈 포즈 (관절 각도 라디안)
         self.home_pose = [0.0, -1.57, 1.57, 1.57, 0.0 ]
-        # forward kinematics 모델 설정
-        self.forward_kinematics = Kinematic()
 
     def process_command(self, cmd):
         try:
@@ -102,10 +100,10 @@ class NaturalCommandNode(Node):
                 self.send_ik_request(x, y, z)
                 return
 
-            if action == "perfect_move":
-                x, y, z = cmd["xyz"]
+            if action == "move":
+                dx, dy, dz = cmd["xyz"]
                 roll, pitch, yaw = cmd["rpy"]
-                self.move_with_ik(x, y, z, roll, pitch, yaw)
+                self.move_with_cartesian(dx, dy, dz, roll, pitch, yaw)
                 return
             if action == "initialize":
                 self.reset_pose()
@@ -424,134 +422,50 @@ class NaturalCommandNode(Node):
         else:
             code = res.error_code.val if res else -1
             self.get_logger().error(f"IK computation failed (code: {code})")
-            
-    def move_with_ik(self, dx, dy, dz, roll=0.0, pitch=0.0, yaw=0.0):
-        
-        # 현재 위치 가져오고 forward kinematics 해서 xyz 갱신
-        current_joint = [self.current_joint1_pos,
-                         self.current_joint2_pos,
-                         self.current_joint3_pos,
-                         self.current_joint4_pos,
-                         self.current_joint5_pos,
-                         0.0 # gripper 값 (생략)
-                         ]
-        
-        """
-        fk_position 구조
-        [ ex.x  ey.x  ez.x px]
-        [ ex.y  ey.y  ez.y py]
-        [ ex.z  ey.z  ez.z pz]
-        [  0     0     0   1 ]
-        px py pz만 따서 사용하고 만약에 openVLA output이 ee(end effector) 기준이면
-        ex.x ey.x ... 이거 사용해서 변환 후 더해야 함
-        """
-        fk_position = self.forward_kinematics.forward_kinematics(current_joint)
-        current_x = fk_position[0][3] / 100.0 # cm -> m
-        current_y = fk_position[1][3] / 100.0
-        current_z = fk_position[2][3] / 100.0
 
-        target_x = current_x + float(dx)
-        target_y = current_y + float(dy)
-        target_z = current_z + float(dz)
+    def get_current_ee_pose(self):
+        req = GetPositionFK.Request()
+        req.header.frame_id = "world"
+        req.fk_link_names = ["end_effector_link"]
+        req.robot_state.joint_state.name = ARM_JOINTS
+        req.robot_state.joint_state.position = [
+            self.current_joint1_pos,
+            self.current_joint2_pos,
+            self.current_joint3_pos,
+            self.current_joint4_pos,
+            self.current_joint5_pos,
+        ]
 
-        self.get_logger().info(
-            f"🎯 [FK Request] current =({current_x:.3f}, {current_y:.3f}, {current_z:.3f}), " 
-            f"target x={target_x:.3f}, target y={target_y:.3f}, target z={target_z:.3f}"
-        )
-
-        pose = PoseStamped()
-        pose.header.frame_id = "world"
-        pose.pose.position.x = target_x
-        pose.pose.position.y = target_y
-        pose.pose.position.z = target_z
-
-        pose.pose.orientation.x = 0.0
-        pose.pose.orientation.y = 0.0
-        pose.pose.orientation.z = 0.0
-        pose.pose.orientation.w = 1.0
-        
-        self.get_logger().info(
-            f"🎯 [IK Request] Pos=({dx:.3f}, {dy:.3f}, {dz:.3f}), " 
-            f"Pitch={pitch:.3f}, Yaw={yaw:.3f}, Roll(separate)={roll:.3f}"
-        )
-        
-        # -------------------------------------------------------------
-        # 2) IK 요청 구성
-        # ----------------------------------------------------------initialize---
-        req = GetPositionIK.Request()
-        req.ik_request.group_name = "arm"
-        req.ik_request.ik_link_name = "end_effector_link"
-        req.ik_request.pose_stamped = pose
-        req.ik_request.timeout.sec = 2
-
-        # -------------------------------------------------------------
-        # 3) IK 호출
-        # -------------------------------------------------------------
-        future = self.ik_client.call_async(req)
+        future = self.fk_client.call_async(req)
         rclpy.spin_until_future_complete(self, future)
         res = future.result()
-
-        # -------------------------------------------------------------
-        # 4) IK 결과 처리
-        # -------------------------------------------------------------
-        if res and res.error_code.val == 1:  # SUCCESS
-            self.get_logger().info("✅ IK computation successful.")
-
-            j = res.solution.joint_state
-            name_to_pos = dict(zip(j.name, j.position))
-
-            arm_joint_map = {
-                name: name_to_pos[name]
-                for name in ARM_JOINTS
-                if name in name_to_pos
-            }
-
-            if not self.check_joint_limits(arm_joint_map):
-                self.get_logger().error("❌ Trajectory aborted due to joint limit violation.")
-                return False
-            
-            # IK 결과에서 joint1~4 사용
-            self.current_joint1_pos = name_to_pos.get("joint1", self.current_joint1_pos)
-            self.current_joint2_pos = name_to_pos.get("joint2", self.current_joint2_pos)
-            self.current_joint3_pos = name_to_pos.get("joint3", self.current_joint3_pos)
-            self.current_joint4_pos = name_to_pos.get("joint4", self.current_joint4_pos)
-
-            # 🔑 roll은 joint5에 직접 추가
-            # self.current_joint4_pos += pitch
-            self.current_joint5_pos += roll
-
-            joint_list = [
-                self.current_joint1_pos,
-                self.current_joint2_pos,
-                self.current_joint3_pos,
-                self.current_joint4_pos,
-                self.current_joint5_pos,
-            ]
-            
-            self.get_logger().info(
-                f"📐 Joint angles: J1={joint_list[0]:.3f}, J2={joint_list[1]:.3f}, "
-                f"J3={joint_list[2]:.3f}, J4={joint_list[3]:.3f}, J5={joint_list[4]:.3f}"
-            )
-
-            # ---------------------------------------------------------
-            # 5) Trajectory 생성 & Publish
-            # ---------------------------------------------------------
-            traj = JointTrajectory()
-            traj.joint_names = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5']
-
-            pt = JointTrajectoryPoint()
-            pt.positions = joint_list
-            pt.time_from_start.sec = 2
-            traj.points.append(pt)
-
-            self.arm_pub.publish(traj)
-            
-            return True
-
+        self.get_logger().info(f"current_x = {res.pose_stamped[0].pose.position.x}")
+        self.get_logger().info(f"current_y = {res.pose_stamped[0].pose.position.y}")
+        self.get_logger().info(f"current_z = {res.pose_stamped[0].pose.position.z}")
+        self.get_logger().info(f"orientation = {res.pose_stamped[0].pose.orientation}")
+        if res and res.error_code.val == 1:
+            return res.pose_stamped[0]
         else:
-            code = res.error_code.val if res else -1
-            self.get_logger().error(f"❌ IK computation failed (code: {code})")
+            self.get_logger().error("❌ FK failed")
+            return None
+
+
+    def move_with_cartesian(self, dx, dy, dz, roll=0, pitch=0, yaw=0):
+        current_pose = self.get_current_ee_pose()
+        if current_pose is None:
             return False
+
+        target_x = current_pose.pose.position.x + dx
+        target_y = current_pose.pose.position.y + dy
+        target_z = current_pose.pose.position.z + dz
+
+        self.get_logger().info(
+            f"🎯 Cartesian-like IK target = "
+            f"({target_x:.3f}, {target_y:.3f}, {target_z:.3f})"
+        )
+
+        return self.send_ik_request(target_x, target_y, target_z)
+
 
     def check_joint_limits(self, joint_values: dict) -> bool:
         for name, value in joint_values.items():
