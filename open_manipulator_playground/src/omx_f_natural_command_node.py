@@ -590,6 +590,7 @@ class NaturalCommandNode(Node):
         """저장할 최신 이미지 업데이트"""
         with self.image_lock:
             self.latest_image = msg
+        
 
     def image_to_base64(self, cv_image):
         """OpenCV 이미지를 Base64 문자열로 변환 (vla_bridge logic 복사)"""
