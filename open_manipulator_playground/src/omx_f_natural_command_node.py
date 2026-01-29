@@ -11,8 +11,6 @@ from geometry_msgs.msg import PoseStamped
 from moveit_msgs.srv import GetPositionIK, GetCartesianPath, GetPositionFK
 from tf2_ros import Buffer, TransformListener
 from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
-from sensor_msgs.msg import JointState
-from moveit_msgs.msg import RobotState
 
 # 링크 길이들 (미터 단위)
 L2 = 0.128
@@ -102,7 +100,7 @@ class NaturalCommandNode(Node):
                 self.send_ik_request(x, y, z)
                 return
 
-            if action == "move_ik":
+            if action == "move":
                 dx, dy, dz = cmd["xyz"]
                 roll, pitch, yaw = cmd["rpy"]
                 self.move_with_cartesian(dx, dy, dz, roll, pitch, yaw)
@@ -393,17 +391,6 @@ class NaturalCommandNode(Node):
         pose.pose.position.z = float(z)
         pose.pose.orientation.w = 1.0
         req = GetPositionIK.Request()
-        state = RobotState()
-        js = JointState()
-        js.name = ['joint1', 'joint2', 'joint3', 'joint4']
-        js.position = [
-            self.current_joint1_pos,
-            self.current_joint2_pos,
-            self.current_joint3_pos,
-            self.current_joint4_pos
-        ]
-        state.joint_state = js
-        req.ik_request.robot_state = state
         req.ik_request.group_name = "arm"
         req.ik_request.ik_link_name = "end_effector_link"
         req.ik_request.pose_stamped = pose
@@ -462,26 +449,23 @@ class NaturalCommandNode(Node):
             self.get_logger().error("❌ FK failed")
             return None
 
+
     def move_with_cartesian(self, dx, dy, dz, roll=0, pitch=0, yaw=0):
         current_pose = self.get_current_ee_pose()
-        if not current_pose: return
+        if current_pose is None:
+            return False
 
-        # 1단계: 살짝 위로 들기 (Z축 확보)
-        lift_z = 0.10  # 5cm 위로
-        self.send_ik_request(current_pose.pose.position.x, 
-                            current_pose.pose.position.y, 
-                            current_pose.pose.position.z + lift_z)
-        import time
-        time.sleep(0.5) # 이동 시간 대기
-
-        # 2단계: 목표 X, Y로 이동 (위로 들린 상태 유지)
         target_x = current_pose.pose.position.x + dx
         target_y = current_pose.pose.position.y + dy
-        self.send_ik_request(target_x, target_y, current_pose.pose.position.z + lift_z)
-        time.sleep(0.5)
+        target_z = current_pose.pose.position.z + dz
 
-        # 3단계: 다시 원래 높이(혹은 목표 높이)로 내리기
-        self.send_ik_request(target_x, target_y, current_pose.pose.position.z + dz)
+        self.get_logger().info(
+            f"🎯 Cartesian-like IK target = "
+            f"({target_x:.3f}, {target_y:.3f}, {target_z:.3f})"
+        )
+
+        return self.send_ik_request(target_x, target_y, target_z)
+
 
     def check_joint_limits(self, joint_values: dict) -> bool:
         for name, value in joint_values.items():
