@@ -8,13 +8,32 @@ from control_msgs.action import GripperCommand
 from control_msgs.msg import GripperCommand as GripperCommandMsg
 from rclpy.action import ActionClient
 from geometry_msgs.msg import PoseStamped
-from moveit_msgs.srv import GetPositionIK, GetCartesianPath, GetPositionFK
-from tf2_ros import Buffer, TransformListener
-from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
+from moveit_msgs.srv import GetPositionIK, GetCartesianPath
 
+'''
+JointTrajectoryPoint class : 하나의 시점에서 로봇들의 관절이 어떤 상태가 되어야하는지를 담는 클래스
+JointTrajectoryPoint(
+    positions=[1.0, 0.5],
+    time_from_start=Duration(seconds=2.0)
+) => 2초 뒤에 J1 = 1.0, J2 = 0.5로 가라 지시
+
+JointTrajectory class : JointTrajectoryPoint 여러 개를 모아놓은 전체 로봇 움직임 경로(Trajectory).
+JointTrajectory(
+    joint_names=["joint1", "joint2"],
+    points=[
+        JointTrajectoryPoint(positions=[0.0, 0.0], time_from_start=0.0),
+        JointTrajectoryPoint(positions=[0.5, 0.2], time_from_start=1.0),
+        JointTrajectoryPoint(positions=[1.0, 0.5], time_from_start=2.0),
+    ]
+) => o초 뒤, 1초뒤, 2초뒤 각각 J1, J2를 아래 리스트에 따라 움직여라
+'''
 # 링크 길이들 (미터 단위)
 L2 = 0.128
 L3 = 0.124
+# 그리퍼랑 L4등등 직접 쟀었음.
+L_GRIPPER = 0.126
+L4 = 0.165 # 추정치
+d5 = 0.09193 
 
 # 연속 회전에 관련된 상수들
 KEEP_ROTATE_SPEED_DEG_S = 10.0 # 회전 속도
@@ -44,15 +63,13 @@ class NaturalCommandNode(Node):
         # IK(역기구학) 계산과 카르테시안 경로 계산을 위한 서비스 클라이언트
         self.ik_client = self.create_client(GetPositionIK, '/compute_ik')
         self.cartesian_client = self.create_client(GetCartesianPath, '/compute_cartesian_path')
-        self.fk_client = self.create_client(GetPositionFK, '/compute_fk')
 
         # ik 서비스가 준비될 때까지 대기 (동기 로그 출력)
         while not self.ik_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Waiting for /compute_ik service...')
         while not self.cartesian_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Waiting for /compute_cartesian_path service...')
-        while not self.fk_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Waiting for /compute_fk service...')
+
         # 현재 관절 상태(라디안) 초기값 => joint5 는 그리퍼 회전인데 적용 안 한 것같 음
         self.current_joint1_pos = 0.0
         self.current_joint2_pos = 0.0
@@ -100,10 +117,10 @@ class NaturalCommandNode(Node):
                 self.send_ik_request(x, y, z)
                 return
 
-            if action == "move":
-                dx, dy, dz = cmd["xyz"]
+            if action == "absolute_move":
+                x, y, z = cmd["xyz"]
                 roll, pitch, yaw = cmd["rpy"]
-                self.move_with_cartesian(dx, dy, dz, roll, pitch, yaw)
+                self.move_absolute(x, y, z, roll, pitch, yaw)
                 return
             if action == "initialize":
                 self.reset_pose()
@@ -422,50 +439,208 @@ class NaturalCommandNode(Node):
         else:
             code = res.error_code.val if res else -1
             self.get_logger().error(f"IK computation failed (code: {code})")
+            
+    def move_with_ik(self, x, y, z, roll=0.0, pitch=0.0, yaw=0.0):
 
-    def get_current_ee_pose(self):
-        req = GetPositionFK.Request()
-        req.header.frame_id = "world"
-        req.fk_link_names = ["end_effector_link"]
-        req.robot_state.joint_state.name = ARM_JOINTS
-        req.robot_state.joint_state.position = [
-            self.current_joint1_pos,
-            self.current_joint2_pos,
-            self.current_joint3_pos,
-            self.current_joint4_pos,
-            self.current_joint5_pos,
-        ]
+        # delta_h = L_GRIPPER * math.sin(yaw)
+        # delta_j = math.asin(delta_h / L4)
+        
+        # 현재 위치 가져오기
+        px = self.current_ee_pose.pose.position.x
+        py = self.current_ee_pose.pose.position.y
 
-        future = self.fk_client.call_async(req)
+        # dx =  (px * math.cos(delta_j) - py * math.sin(delta_j)) - px
+        # dy =  (px * math.sin(delta_j) + py * math.cos(delta_j)) - py
+
+        # -------------------------------
+        # 보정된 목표 위치
+        # -------------------------------
+        pose = PoseStamped()
+        pose.header.frame_id = "world"
+        pose.pose.position.x = self.current_ee_pose.pose.position.x + float(x) #+ dx
+        pose.pose.position.y = self.current_ee_pose.pose.position.y + float(y) #+ dy
+        pose.pose.position.z = self.current_ee_pose.pose.position.z + float(z)
+        pose.pose.orientation.w = 1.0
+        self.get_logger().info(
+            f"🎯 [IK Request] Pos=({x:.3f}, {y:.3f}, {z:.3f}), " 
+            f"Pitch={pitch:.3f}, Yaw={yaw:.3f}, Roll(separate)={roll:.3f}"
+        )
+        
+        # -------------------------------------------------------------
+        # 2) IK 요청 구성
+        # ----------------------------------------------------------initialize---
+        req = GetPositionIK.Request()
+        req.ik_request.group_name = "arm"
+        req.ik_request.ik_link_name = "end_effector_link"
+        req.ik_request.pose_stamped = pose
+        req.ik_request.timeout.sec = 2
+
+        # -------------------------------------------------------------
+        # 3) IK 호출
+        # -------------------------------------------------------------
+        future = self.ik_client.call_async(req)
         rclpy.spin_until_future_complete(self, future)
         res = future.result()
-        self.get_logger().info(f"current_x = {res.pose_stamped[0].pose.position.x}")
-        self.get_logger().info(f"current_y = {res.pose_stamped[0].pose.position.y}")
-        self.get_logger().info(f"current_z = {res.pose_stamped[0].pose.position.z}")
-        self.get_logger().info(f"orientation = {res.pose_stamped[0].pose.orientation}")
-        if res and res.error_code.val == 1:
-            return res.pose_stamped[0]
+
+        # -------------------------------------------------------------
+        # 4) IK 결과 처리
+        # -------------------------------------------------------------
+        if res and res.error_code.val == 1:  # SUCCESS
+            self.get_logger().info("✅ IK computation successful.")
+
+            j = res.solution.joint_state
+            name_to_pos = dict(zip(j.name, j.position))
+
+            arm_joint_map = {
+                name: name_to_pos[name]
+                for name in ARM_JOINTS
+                if name in name_to_pos
+            }
+
+            if not self.check_joint_limits(arm_joint_map):
+                self.get_logger().error("❌ Trajectory aborted due to joint limit violation.")
+                return False
+            
+            # IK 결과에서 joint1~4 사용
+            self.current_joint1_pos = name_to_pos.get("joint1", self.current_joint1_pos)
+            self.current_joint2_pos = name_to_pos.get("joint2", self.current_joint2_pos)
+            self.current_joint3_pos = name_to_pos.get("joint3", self.current_joint3_pos)
+            self.current_joint4_pos = name_to_pos.get("joint4", self.current_joint4_pos)
+
+            # 🔑 roll은 joint5에 직접 추가
+            # self.current_joint4_pos += pitch
+            self.current_joint5_pos += roll
+
+            joint_list = [
+                self.current_joint1_pos,
+                self.current_joint2_pos,
+                self.current_joint3_pos,
+                self.current_joint4_pos,
+                self.current_joint5_pos,
+            ]
+
+            self.get_logger().info(
+                f"📐 Joint angles: J1={joint_list[0]:.3f}, J2={joint_list[1]:.3f}, "
+                f"J3={joint_list[2]:.3f}, J4={joint_list[3]:.3f}, J5={joint_list[4]:.3f}"
+            )
+
+            # ---------------------------------------------------------
+            # 5) Trajectory 생성 & Publish
+            # ---------------------------------------------------------
+            traj = JointTrajectory()
+            traj.joint_names = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5']
+
+            pt = JointTrajectoryPoint()
+            pt.positions = joint_list
+            pt.time_from_start.sec = 2
+            traj.points.append(pt)
+
+            self.arm_pub.publish(traj)
+            
+            return True
+
         else:
-            self.get_logger().error("❌ FK failed")
-            return None
-
-
-    def move_with_cartesian(self, dx, dy, dz, roll=0, pitch=0, yaw=0):
-        current_pose = self.get_current_ee_pose()
-        if current_pose is None:
+            code = res.error_code.val if res else -1
+            self.get_logger().error(f"❌ IK computation failed (code: {code})")
             return False
 
-        target_x = current_pose.pose.position.x + dx
-        target_y = current_pose.pose.position.y + dy
-        target_z = current_pose.pose.position.z + dz
-
+    def move_absolute(self, x, y, z, roll, pitch, yaw):
+        """
+        Absolute move command handling both Position (XYZ) and Orientation (RPY).
+        """
         self.get_logger().info(
-            f"🎯 Cartesian-like IK target = "
-            f"({target_x:.3f}, {target_y:.3f}, {target_z:.3f})"
+            f"🎯 [Absolute Move] Pos=({x:.3f}, {y:.3f}, {z:.3f}), "
+            f"RPY=({roll:.3f}, {pitch:.3f}, {yaw:.3f})"
         )
 
-        return self.send_ik_request(target_x, target_y, target_z)
+        # 1. Euler (RPY) -> Quaternion conversion
+        cy = math.cos(yaw * 0.5)
+        sy = math.sin(yaw * 0.5)
+        cp = math.cos(pitch * 0.5)
+        sp = math.sin(pitch * 0.5)
+        cr = math.cos(roll * 0.5)
+        sr = math.sin(roll * 0.5)
 
+        qw = cr * cp * cy + sr * sp * sy
+        qx = sr * cp * cy - cr * sp * sy
+        qy = cr * sp * cy + sr * cp * sy
+        qz = cr * cp * sy - sr * sp * cy
+
+        # 2. Construct PoseStamped
+        pose = PoseStamped()
+        pose.header.frame_id = "world"
+        pose.pose.position.x = float(x)
+        pose.pose.position.y = float(y)
+        pose.pose.position.z = float(z)
+        pose.pose.orientation.x = qx
+        pose.pose.orientation.y = qy
+        pose.pose.orientation.z = qz
+        pose.pose.orientation.w = qw
+
+        # 3. Call IK Service
+        req = GetPositionIK.Request()
+        req.ik_request.group_name = "arm"
+        req.ik_request.ik_link_name = "end_effector_link"
+        req.ik_request.pose_stamped = pose
+        req.ik_request.timeout.sec = 2
+
+        future = self.ik_client.call_async(req)
+        rclpy.spin_until_future_complete(self, future)
+        res = future.result()
+
+        # 4. Process Result
+        if res and res.error_code.val == 1:
+            self.get_logger().info("✅ IK computation successful.")
+            j = res.solution.joint_state
+            name_to_pos = dict(zip(j.name, j.position))
+
+            # Validate against Joint Limits
+            arm_joint_map = {
+                name: name_to_pos[name]
+                for name in ARM_JOINTS
+                if name in name_to_pos
+            }
+
+            if not self.check_joint_limits(arm_joint_map):
+                self.get_logger().error("❌ Trajectory aborted due to joint limit violation.")
+                return False
+            
+            # Update internal joint states
+            self.current_joint1_pos = name_to_pos.get("joint1", self.current_joint1_pos)
+            self.current_joint2_pos = name_to_pos.get("joint2", self.current_joint2_pos)
+            self.current_joint3_pos = name_to_pos.get("joint3", self.current_joint3_pos)
+            self.current_joint4_pos = name_to_pos.get("joint4", self.current_joint4_pos)
+            # joint5 usually not part of 4DOF IK solutions for this specific manipulator style
+            # If the user wants roll to be applied to joint5 manually like in move_with_ik:
+            self.current_joint5_pos = getattr(self, 'current_joint5_pos', 0.0) + roll 
+            # But for absolute move, we expect IK to handle orientation if possible.
+            # If this is a 5DOF robot where J5 is gripper roll, we might need to handle it.
+            # However, standard IK should return J5 if it's in the group.
+            # Given the previous code hack, let's keep standard IK first.
+            
+            # Check if joint5 is in result
+            if "joint5" in name_to_pos:
+                self.current_joint5_pos = name_to_pos["joint5"]
+            
+            # Construct Trajectory
+            traj = JointTrajectory()
+            traj.joint_names = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5']
+            pt = JointTrajectoryPoint()
+            pt.positions = [
+                self.current_joint1_pos,
+                self.current_joint2_pos,
+                self.current_joint3_pos,
+                self.current_joint4_pos,
+                self.current_joint5_pos
+            ]
+            pt.time_from_start.sec = 2
+            traj.points.append(pt)
+            self.arm_pub.publish(traj)
+            return True
+        else:
+            code = res.error_code.val if res else -1
+            self.get_logger().error(f"❌ IK computation failed (code: {code})")
+            return False
 
     def check_joint_limits(self, joint_values: dict) -> bool:
         for name, value in joint_values.items():
@@ -529,131 +704,6 @@ class NaturalCommandNode(Node):
         pt.time_from_start.nanosec = int(KEEP_DT * 1e9)
         traj.points.append(pt)
         self.arm_pub.publish(traj)
-
-    # --- VLA Bridge Methods ---
-    def vla_image_callback(self, msg):
-        """저장할 최신 이미지 업데이트"""
-        with self.image_lock:
-            self.latest_image = msg
-
-    def image_to_base64(self, cv_image):
-        """OpenCV 이미지를 Base64 문자열로 변환 (vla_bridge logic 복사)"""
-        if self.vla_enable_compression:
-            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.vla_image_quality]
-            success, encoded_image = cv2.imencode('.jpg', cv_image, encode_param)
-            if not success:
-                self.get_logger().error("Failed to encode image")
-                return None
-            image_bytes = encoded_image.tobytes()
-        else:
-            success, encoded_image = cv2.imencode('.png', cv_image)
-            if not success:
-                self.get_logger().error("Failed to encode image")
-                return None
-            image_bytes = encoded_image.tobytes()
-
-        return base64.b64encode(image_bytes).decode('utf-8')
-
-    def execute_vla_step(self, prompt):
-        """단일 VLA 스텝 실행: 이미지 캡처 -> API 요청 -> 움직임 실행"""
-        if self.vla_active:
-            self.get_logger().warn("VLA step already in progress...")
-            return False
-        
-        self.vla_active = True
-        try:
-            with self.image_lock:
-                if self.latest_image is None:
-                    self.get_logger().warn("No image received yet for VLA")
-                    return False
-                image_msg = self.latest_image
-
-            # 1. 이미지 변환
-            cv_image = self.cv_bridge.imgmsg_to_cv2(image_msg, 'bgr8')
-            image_base64 = self.image_to_base64(cv_image)
-            
-            if image_base64 is None:
-                return False
-
-            # 2. VLA API 요청
-            request_data = {
-                "image": image_base64,
-                "prompt": prompt,
-                "unnorm_key": "bridge_orig"
-            }
-            
-            self.get_logger().info(f"🚀 Sending VLA request with prompt: '{prompt}'")
-            response = requests.post(
-                self.vla_api_url,
-                json=request_data,
-                timeout=self.vla_api_timeout
-            )
-
-            if response.status_code == 200:
-                result = response.json()
-                self.get_logger().info(f"✅ VLA Response received: {result}")
-                
-                # 3. 움직임 실행
-                # API 결과 형식에 따른 파싱 (vla_bridge logic 참고)
-                joint_positions = result.get("joint_positions", [])
-                gripper_val = result.get("gripper", "open")
-                
-                if joint_positions:
-                    # 5DOF 로봇이라고 가정 (joint1~5)
-                    traj = JointTrajectory()
-                    traj.joint_names = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5']
-                    pt = JointTrajectoryPoint()
-                    pt.positions = [float(p) for p in joint_positions[:5]]
-                    pt.time_from_start.sec = 2
-                    traj.points.append(pt)
-                    self.arm_pub.publish(traj)
-                    
-                    # 내부 상태 업데이트
-                    self.current_joint1_pos = pt.positions[0]
-                    self.current_joint2_pos = pt.positions[1]
-                    self.current_joint3_pos = pt.positions[2]
-                    self.current_joint4_pos = pt.positions[3]
-                    self.current_joint5_pos = pt.positions[4]
-                
-                if gripper_val:
-                    # Gripper 처리
-                    pos_deg = 57.0 if gripper_val == "open" else 0.0
-                    if isinstance(gripper_val, (int, float)):
-                        pos_deg = float(gripper_val)
-                    
-                    pos_rad = math.radians(pos_deg)
-                    goal = GripperCommand.Goal()
-                    goal.command = GripperCommandMsg()
-                    goal.command.position = pos_rad
-                    goal.command.max_effort = 1.0
-                    self.gripper_client.wait_for_server()
-                    self.gripper_client.send_goal_async(goal)
-                
-                # 움직임이 완료될 때까지 대기
-                import time
-                time.sleep(2.5) # 움직임 시간 대기
-                return True
-            else:
-                self.get_logger().error(f"❌ VLA API failed: {response.status_code} - {response.text}")
-                return False
-
-        except Exception as e:
-            self.get_logger().error(f"💥 VLA execution error: {str(e)}")
-            return False
-        finally:
-            self.vla_active = False
-
-    def vla_loop_thread(self, prompt):
-        """VLA 루프 스레드"""
-        self.get_logger().info("🔄 Starting VLA iterative loop...")
-        while self.vla_loop_active and rclpy.ok():
-            success = self.execute_vla_step(prompt)
-            if not success:
-                self.get_logger().warn("VLA step failed in loop, retrying in 1s...")
-                import time
-                time.sleep(1.0)
-        self.get_logger().info("🛑 VLA loop finished.")
-    # -------------------------
 
 
 def main():
