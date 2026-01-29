@@ -13,11 +13,8 @@ from tf2_ros import Buffer, TransformListener
 from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
-from cv_bridge import CvBridge
 import cv2
 import json
-import base64
-import requests
 import threading
 from datetime import datetime
 
@@ -82,34 +79,15 @@ class NaturalCommandNode(Node):
         # 브리지 모드 활성화 로그 출력
         self.get_logger().info("Bridge mode active (no LLM parser, JSON directly expected)")
 
-        # --- VLA Configuration ---
-        self.declare_parameter('vla_api_url', 'http://100.82.52.106:8080/api/vla/infer')
-        self.declare_parameter('vla_api_timeout', 10.0)
-        self.declare_parameter('vla_image_topic', '/camera/image_raw')
-        self.declare_parameter('vla_prompt', 'Move the robot arm to pick up the object')
-        self.declare_parameter('enable_image_compression', True)
-        self.declare_parameter('image_quality', 85)
+        self.vla_bridge_enabled = False # VLA 브리지로부터의 명령 수락 여부
 
-        self.vla_api_url = self.get_parameter('vla_api_url').value
-        self.vla_api_timeout = self.get_parameter('vla_api_timeout').value
-        self.vla_prompt = self.get_parameter('vla_prompt').value
-        vla_image_topic = self.get_parameter('vla_image_topic').value
-        self.vla_enable_compression = self.get_parameter('enable_image_compression').value
-        self.vla_image_quality = self.get_parameter('image_quality').value
-
-        self.cv_bridge = CvBridge()
-        self.latest_image = None
-        self.image_lock = threading.Lock()
-        
-        self.vla_image_sub = self.create_subscription(
-            Image,
-            vla_image_topic,
-            self.vla_image_callback,
+        # VLA 브리지 명령 구독
+        self.vla_bridge_sub = self.create_subscription(
+            String,
+            '/llm_command', # vla_bridge.py의 기본 output_topic
+            self.vla_bridge_command_callback,
             10
         )
-        
-        self.vla_active = False
-        self.vla_loop_active = False
         # -------------------------
 
         # 연속 회전 관련 내부 상태
@@ -206,20 +184,19 @@ class NaturalCommandNode(Node):
                 self.look_command(direction)
                 return
 
-            if action == "vla_step":
-                prompt = cmd.get("prompt", self.vla_prompt)
-                threading.Thread(target=self.execute_vla_step, args=(prompt,), daemon=True).start()
-                return
-
-            if action == "vla_loop":
-                prompt = cmd.get("prompt", self.vla_prompt)
-                self.vla_loop_active = True
-                threading.Thread(target=self.vla_loop_thread, args=(prompt,), daemon=True).start()
-                return
-
             if action == "vla_stop":
                 self.vla_loop_active = False
                 self.get_logger().info("VLA loop stop requested")
+                return
+
+            if action == "vla_bridge_on":
+                self.vla_bridge_enabled = True
+                self.get_logger().info("VLA Bridge listener ENABLED")
+                return
+
+            if action == "vla_bridge_off":
+                self.vla_bridge_enabled = False
+                self.get_logger().info("VLA Bridge listener DISABLED")
                 return
             
             if action in ("rotate", "move"):
@@ -585,81 +562,29 @@ class NaturalCommandNode(Node):
         traj.points.append(pt)
         self.arm_pub.publish(traj)
 
-    # --- VLA Bridge Methods ---
-    def vla_image_callback(self, msg):
-        """저장할 최신 이미지 업데이트"""
-        with self.image_lock:
-            self.latest_image = msg
 
-    def image_to_base64(self, cv_image):
-        """OpenCV 이미지를 Base64 문자열로 변환 (vla_bridge logic 복사)"""
-        if self.vla_enable_compression:
-            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.vla_image_quality]
-            success, encoded_image = cv2.imencode('.jpg', cv_image, encode_param)
-            if not success:
-                self.get_logger().error("Failed to encode image")
-                return None
-            image_bytes = encoded_image.tobytes()
-        else:
-            success, encoded_image = cv2.imencode('.png', cv_image)
-            if not success:
-                self.get_logger().error("Failed to encode image")
-                return None
-            image_bytes = encoded_image.tobytes()
+    def vla_bridge_command_callback(self, msg):
+        """VLA 브리지(vla_bridge.py)로부터 수신된 명령 처리"""
+        if not self.vla_bridge_enabled:
+            return
 
-        return base64.b64encode(image_bytes).decode('utf-8')
-
-    def execute_vla_step(self, prompt):
-        """단일 VLA 스텝 실행: 이미지 캡처 -> API 요청 -> 움직임 실행"""
-        if self.vla_active:
-            self.get_logger().warn("VLA step already in progress...")
-            return False
-        
-        self.vla_active = True
         try:
-            with self.image_lock:
-                if self.latest_image is None:
-                    self.get_logger().warn("No image received yet for VLA")
-                    return False
-                image_msg = self.latest_image
+            cmd = json.loads(msg.data)
+            self.get_logger().info(f"📥 Received VLA Bridge command: {cmd.get('action')}")
 
-            # 1. 이미지 변환
-            cv_image = self.cv_bridge.imgmsg_to_cv2(image_msg, 'bgr8')
-            image_base64 = self.image_to_base64(cv_image)
-            
-            if image_base64 is None:
-                return False
+            # 'vla_stream' 액션 처리
+            if cmd.get("action") == "vla_stream":
+                joint_positions = cmd.get("joint_positions", [])
+                gripper_val = cmd.get("gripper", "open")
 
-            # 2. VLA API 요청
-            request_data = {
-                "image": image_base64,
-                "prompt": prompt,
-                "unnorm_key": "bridge_orig"
-            }
-            
-            self.get_logger().info(f"🚀 Sending VLA request with prompt: '{prompt}'")
-            response = requests.post(
-                self.vla_api_url,
-                json=request_data,
-                timeout=self.vla_api_timeout
-            )
-
-            if response.status_code == 200:
-                result = response.json()
-                self.get_logger().info(f"✅ VLA Response received: {result}")
-                
-                # 3. 움직임 실행
-                # API 결과 형식에 따른 파싱 (vla_bridge logic 참고)
-                joint_positions = result.get("joint_positions", [])
-                gripper_val = result.get("gripper", "open")
-                
                 if joint_positions:
-                    # 5DOF 로봇이라고 가정 (joint1~5)
+                    # 5DOF 로봇 (joint1~5)
                     traj = JointTrajectory()
                     traj.joint_names = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5']
                     pt = JointTrajectoryPoint()
                     pt.positions = [float(p) for p in joint_positions[:5]]
-                    pt.time_from_start.sec = 2
+                    pt.time_from_start.sec = 0
+                    pt.time_from_start.nanosec = 200000000 # 0.2s (스트리밍이므로 짧게 설정)
                     traj.points.append(pt)
                     self.arm_pub.publish(traj)
                     
@@ -670,8 +595,8 @@ class NaturalCommandNode(Node):
                     self.current_joint4_pos = pt.positions[3]
                     self.current_joint5_pos = pt.positions[4]
                 
-                if gripper_val:
-                    # Gripper 처리
+                if gripper_val is not None:
+                    # Gripper 처리 (vla_bridge는 "open"/"close" 혹은 수치값 제공 가능)
                     pos_deg = 57.0 if gripper_val == "open" else 0.0
                     if isinstance(gripper_val, (int, float)):
                         pos_deg = float(gripper_val)
@@ -681,33 +606,13 @@ class NaturalCommandNode(Node):
                     goal.command = GripperCommandMsg()
                     goal.command.position = pos_rad
                     goal.command.max_effort = 1.0
-                    self.gripper_client.wait_for_server()
-                    self.gripper_client.send_goal_async(goal)
-                
-                # 움직임이 완료될 때까지 대기
-                import time
-                time.sleep(2.5) # 움직임 시간 대기
-                return True
-            else:
-                self.get_logger().error(f"❌ VLA API failed: {response.status_code} - {response.text}")
-                return False
+                    # ActionClient는 비동기로 동작하므로 wait_for_server 호출 시 주의가 필요하지만
+                    # 스트리밍 모드에서는 계속 호출되므로 서버가 준비되어 있다고 가정함
+                    if self.gripper_client.server_is_ready():
+                        self.gripper_client.send_goal_async(goal)
 
         except Exception as e:
-            self.get_logger().error(f"💥 VLA execution error: {str(e)}")
-            return False
-        finally:
-            self.vla_active = False
-
-    def vla_loop_thread(self, prompt):
-        """VLA 루프 스레드"""
-        self.get_logger().info("🔄 Starting VLA iterative loop...")
-        while self.vla_loop_active and rclpy.ok():
-            success = self.execute_vla_step(prompt)
-            if not success:
-                self.get_logger().warn("VLA step failed in loop, retrying in 1s...")
-                import time
-                time.sleep(1.0)
-        self.get_logger().info("🛑 VLA loop finished.")
+            self.get_logger().error(f"Error in vla_bridge_command_callback: {e}")
     # -------------------------
 
 
