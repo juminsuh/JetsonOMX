@@ -117,11 +117,12 @@ class NaturalCommandNode(Node):
                 self.send_ik_request(x, y, z)
                 return
 
-            if action == "move":
+            if action == "move_ik":
                 dx, dy, dz = cmd["xyz"]
                 roll, pitch, yaw = cmd["rpy"]
                 self.move_with_cartesian(dx, dy, dz, roll, pitch, yaw)
                 return
+            
             if action == "initialize":
                 self.reset_pose()
                 return

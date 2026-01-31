@@ -22,7 +22,8 @@ import base64
 import requests
 import threading
 from datetime import datetime
-
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import qos_profile_sensor_data
 
 class VLABridgeNode(Node):
     """VLA Bridge Node - 원격 VLA API 서버와 통신"""
@@ -53,15 +54,21 @@ class VLABridgeNode(Node):
         # CV Bridge (ROS Image ↔ OpenCV 변환)
         self.cv_bridge = CvBridge()
 
-        # 이미지 구독
+        # ... __init__ 내부 ...
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT, # 핵심: v4l2_camera와 맞춤
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+        
         self.subscription = self.create_subscription(
             Image,
             image_topic,
             self.image_callback,
-            10
+            qos_profile_sensor_data
         )
 
-        # 명령 Publisher
+        # 명령 Publisherm
         self.command_publisher = self.create_publisher(
             String,
             output_topic,
@@ -85,7 +92,10 @@ class VLABridgeNode(Node):
         self.get_logger().info(f"📤 Output topic: {output_topic}")
 
     def image_callback(self, msg):
-        """카메라 이미지 수신 콜백"""
+        self.get_logger().info(
+        f"📸 Image received: {msg.width}x{msg.height} encoding={msg.encoding}",
+        throttle_duration_sec=2.0
+        )
         with self.image_lock:
             self.latest_image = msg
 
