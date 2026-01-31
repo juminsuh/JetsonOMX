@@ -7,3 +7,4 @@ pydantic
 opencv-python-headless
 pillow
 PyYAML
+deep_translator
