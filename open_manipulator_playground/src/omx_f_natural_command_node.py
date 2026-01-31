@@ -13,7 +13,8 @@ from tf2_ros import Buffer, TransformListener
 from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
 from sensor_msgs.msg import JointState
 from moveit_msgs.msg import RobotState
-
+import base64
+import cv2
 # 링크 길이들 (미터 단위)
 L2 = 0.128
 L3 = 0.124
