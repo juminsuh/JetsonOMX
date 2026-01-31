@@ -22,8 +22,8 @@ import base64
 import requests
 import threading
 from datetime import datetime
-
-
+# from deep_translator import GoogleTranslator
+# GoogleTranslator(source='en', target='ko').translate(korean_location)
 class VLABridgeNode(Node):
     """VLA Bridge Node - 원격 VLA API 서버와 통신"""
 
