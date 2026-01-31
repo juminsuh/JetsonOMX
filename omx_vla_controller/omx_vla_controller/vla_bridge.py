@@ -22,6 +22,17 @@ import base64
 import requests
 import threading
 from datetime import datetime
+import os
+from dotenv import load_dotenv
+import openai
+
+# WHISPER_KEY = os.getenv("WHISPER_KEY")
+# client = OpenAI(api_key=WHISPER_KEY)
+# transcript = client.audio.transcriptions.create(
+#             model="whisper-1", 
+#             file=audio_file
+#         )
+
 # from deep_translator import GoogleTranslator
 # GoogleTranslator(source='en', target='ko').translate(korean_location)
 class VLABridgeNode(Node):
