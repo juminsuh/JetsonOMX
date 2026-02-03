@@ -2,6 +2,8 @@
 venv/
 .venv/
 
+venv_vla/
+.venv_vla/
 # Python cache
 __pycache__/
 *.pyc

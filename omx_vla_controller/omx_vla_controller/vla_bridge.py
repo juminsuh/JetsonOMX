@@ -44,7 +44,7 @@ class VLABridgeNode(Node):
         # 파라미터 선언
         self.declare_parameter('api_url', 'http://localhost:8080/api/vla/infer')
         self.declare_parameter('api_timeout', 5.0)
-        self.declare_parameter('image_topic', '/camera/image_raw')
+        self.declare_parameter('image_topic', '/image_raw')
         self.declare_parameter('output_topic', '/llm_command')
         self.declare_parameter('prompt', 'Move the robot arm to pick up the object while keeping the gripper vertical to the ground and avoiding unnecessary rotation')
         self.declare_parameter('request_rate', 2.0)  # 초당 요청 수 제한

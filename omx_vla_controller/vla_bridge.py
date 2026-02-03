@@ -22,8 +22,19 @@ import base64
 import requests
 import threading
 from datetime import datetime
+import os
+from dotenv import load_dotenv
+import openai
 
+# WHISPER_KEY = os.getenv("WHISPER_KEY")
+# client = OpenAI(api_key=WHISPER_KEY)
+# transcript = client.audio.transcriptions.create(
+#             model="whisper-1", 
+#             file=audio_file
+#         )
 
+# from deep_translator import GoogleTranslator
+# GoogleTranslator(source='en', target='ko').translate(korean_location)
 class VLABridgeNode(Node):
     """VLA Bridge Node - 원격 VLA API 서버와 통신"""
 
@@ -33,9 +44,9 @@ class VLABridgeNode(Node):
         # 파라미터 선언
         self.declare_parameter('api_url', 'http://localhost:8080/api/vla/infer')
         self.declare_parameter('api_timeout', 5.0)
-        self.declare_parameter('image_topic', '/camera/image_raw')
+        self.declare_parameter('image_topic', '/image_raw')
         self.declare_parameter('output_topic', '/llm_command')
-        self.declare_parameter('prompt', 'Move the robot arm to pick up the object')
+        self.declare_parameter('prompt', 'Move the robot arm to pick up the object while keeping the gripper vertical to the ground and avoiding unnecessary rotation')
         self.declare_parameter('request_rate', 2.0)  # 초당 요청 수 제한
         self.declare_parameter('enable_image_compression', True)
         self.declare_parameter('image_quality', 85)  # JPEG 품질 (1-100)

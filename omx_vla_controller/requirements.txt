@@ -1,0 +1,21 @@
+# ROS 2 Jazzy/Humble 호환성을 위한 핵심 라이브러리
+# NumPy 2.x는 기존 cv_bridge와 충돌하므로 1.x로 고정합니다.
+numpy<2.0.0
+
+# 이미지 처리 및 ROS 브릿지 의존성
+opencv-python-headless
+PyYAML
+
+# API 통신 및 환경 설정
+python-dotenv
+requests
+urllib3
+
+# LLM 및 번역 기능
+openai
+deep-translator
+
+# ROS 2 파라미터 및 런치 시스템 기초 도구
+setuptools
+jinja2
+typeguard
