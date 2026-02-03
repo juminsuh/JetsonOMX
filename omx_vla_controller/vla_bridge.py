@@ -27,7 +27,7 @@ class VLABridgeNode(Node):
         super().__init__('vla_bridge_node')
 
         # 1. 파라미터 및 설정
-        self.declare_parameter('api_url', 'http://localhost:8080/api/vla/infer')
+        self.declare_parameter('api_url', 'http://100.82.52.106:8080/api/vla/infer')
         self.api_url = self.get_parameter('api_url').value
         self.api_timeout = 5.0
         
@@ -138,6 +138,7 @@ class VLABridgeNode(Node):
 
             if response.status_code == 200:
                 result = response.json()
+                self.get_logger().info(f"✅ VLA Result: {result}")
                 gripper_state = result.get("gripper", "open")
                 
                 # ROS 메시지 발행
