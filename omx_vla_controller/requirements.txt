@@ -19,3 +19,4 @@ deep-translator
 setuptools
 jinja2
 typeguard
+pydub
