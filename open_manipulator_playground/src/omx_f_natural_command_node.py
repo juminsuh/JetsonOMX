@@ -79,7 +79,7 @@ class NaturalCommandNode(Node):
         # 브리지 모드 활성화 로그 출력
         self.get_logger().info("Bridge mode active (no LLM parser, JSON directly expected)")
 
-        self.vla_bridge_enabled = False # VLA 브리지로부터의 명령 수락 여부
+        self.vla_bridge_enabled = True # VLA 브리지로부터의 명령 수락 여부
 
         # VLA 브리지 명령 구독
         self.vla_bridge_sub = self.create_subscription(

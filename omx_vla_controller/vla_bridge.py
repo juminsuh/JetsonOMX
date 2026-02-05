@@ -103,6 +103,7 @@ class VLABridgeNode(Node):
                     model="whisper-1", file=f, language="ko"
                 )
             
+            self.get_logger().info(f"whisper output : {transcript.text}")
             self.prompt = self.translator.translate(transcript.text)
             self.get_logger().info(f'📝 명령 확정: "{self.prompt}"')
             self.ready_to_send = True
