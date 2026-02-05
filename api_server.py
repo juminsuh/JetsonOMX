@@ -189,8 +189,6 @@ async def vla_infer(request: VLARequest):
         logger.info(f"✅ VLA inference #{request_count} completed")
 
         success_count += 1
-        torch.cuda.empty_cache()
-        logger.info("🧹 CUDA cache cleared")
         
         return {
             "status": "success",
@@ -207,6 +205,25 @@ async def vla_infer(request: VLARequest):
         logger.error(f"❌ Processing error: {e}")
         raise HTTPException(status_code=500, detail=f"VLA inference failed: {str(e)}")
 
+# @app.get("/stats") 다음에 추가
+
+@app.post("/api/vla/clear_cache")
+async def clear_cache():
+    """
+    CUDA 메모리 캐시 정리 엔드포인트
+    명령어가 완전히 끝났을 때 클라이언트가 호출
+    """
+    try:
+        torch.cuda.empty_cache()
+        logger.info("🧹 CUDA cache cleared by client request")
+        return {
+            "status": "success",
+            "message": "CUDA cache cleared",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"❌ Cache clear error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear cache: {str(e)}")
 
 if __name__ == "__main__":
     # 서버 실행
