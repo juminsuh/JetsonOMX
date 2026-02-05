@@ -74,6 +74,7 @@ class VLABridgeNode(Node):
         self.latest_image = None
         self.image_lock = threading.Lock()
         self.request_pending = False
+        self.is_active = True  # 추가
 
         # 통계
         self.request_count = 0
@@ -113,122 +114,120 @@ class VLABridgeNode(Node):
         return base64_string
 
     def send_vla_request(self):
-            """VLA API 서버로 요청 전송"""
-            if self.request_pending:
+        """VLA API 서버로 요청 전송"""
+        if self.request_pending or not self.is_active:  # 수정
+            return
+
+        # 최신 이미지 가져오기
+        with self.image_lock:
+            if self.latest_image is None:
+                self.get_logger().warn("⚠️  No image received yet...", throttle_duration_sec=2.0)
+                return
+            image_msg = self.latest_image
+
+        self.request_pending = True
+        self.request_count += 1
+
+        try:
+            # ROS Image → OpenCV 변환
+            cv_image = self.cv_bridge.imgmsg_to_cv2(image_msg, 'bgr8')
+
+            # Base64 인코딩
+            image_base64 = self.image_to_base64(cv_image)
+            if image_base64 is None:
+                self.request_pending = False
                 return
 
-            # 최신 이미지 가져오기
-            with self.image_lock:
-                if self.latest_image is None:
-                    self.get_logger().warn("⚠️  No image received yet...", throttle_duration_sec=2.0)
-                    return
-                image_msg = self.latest_image
+            # API 요청 데이터 준비
+            request_data = {
+                "image": image_base64,
+                "prompt": self.prompt,
+                "unnorm_key": "bridge_orig"
+            }
 
-            self.request_pending = True
-            self.request_count += 1
+            # HTTP POST 요청
+            self.get_logger().debug(f"Sending request to {self.api_url}")
+            response = requests.post(
+                self.api_url,
+                json=request_data,
+                timeout=self.api_timeout
+            )
 
-            try:
-                # ROS Image → OpenCV 변환
-                cv_image = self.cv_bridge.imgmsg_to_cv2(image_msg, 'bgr8')
+            # 응답 처리
+            if response.status_code == 200:
+                result = response.json()
+                self.success_count += 1
 
-                # Base64 인코딩
-                image_base64 = self.image_to_base64(cv_image)
-                if image_base64 is None:
-                    self.request_pending = False
-                    return
+                # 그리퍼 상태 확인
+                gripper_state = result.get("gripper", "open")
 
-                # API 요청 데이터 준비
-                request_data = {
-                    "image": image_base64,
-                    "prompt": self.prompt,
-                    "unnorm_key": "bridge_orig"
-                }
+                # ROS 2 메시지로 변환
+                self.publish_command(result, image_msg.header.stamp)
 
-                # HTTP POST 요청
-                self.get_logger().debug(f"Sending request to {self.api_url}")
-                response = requests.post(
-                    self.api_url,
-                    json=request_data,
-                    timeout=self.api_timeout
+                self.get_logger().info(
+                    f"✅ Request #{self.request_count} successful "
+                    f"(Success: {self.success_count}, Error: {self.error_count})"
                 )
 
-                # 응답 처리
-                if response.status_code == 200:
-                    result = response.json()
-                    self.success_count += 1
-
-                    # 그리퍼 상태 확인
-                    gripper_state = result.get("gripper", "open")
-
-                    # ROS 2 메시지로 변환
-                    self.publish_command(result, image_msg.header.stamp)
-
-                    self.get_logger().info(
-                        f"✅ Request #{self.request_count} successful "
-                        f"(Success: {self.success_count}, Error: {self.error_count})"
-                    )
-
-                    # 그리퍼가 닫히면(close) 요청 중단
-                    if gripper_state == "close":
-                        self.get_logger().info("🔒 그리퍼가 닫혔습니다. 작업을 종료하고 대기합니다.")
-                        self.ready_to_send = False
-                        
-                        # 서버에 캐시 정리 요청 (추가)
-                        try:
-                            clear_response = requests.post(self.clear_cache_url, timeout=self.api_timeout)
-                            if clear_response.status_code == 200:
-                                self.get_logger().info("🧹 서버 메모리 캐시 정리 완료")
-                        except Exception as e:
-                            self.get_logger().warn(f"⚠️ 캐시 정리 실패: {e}")
-                        
-                        self.get_logger().info('🎹 다시 명령하려면 "q"를 누르세요.')
-                else:
-                    self.error_count += 1
-                    self.get_logger().error(
-                        f"❌ API request failed: HTTP {response.status_code} - {response.text}"
-                    )
-
-            except requests.exceptions.Timeout:
+                # 그리퍼가 닫히면(close) 요청 중단
+                if gripper_state == "close":
+                    self.get_logger().info("🔒 그리퍼가 닫혔습니다. 작업을 종료하고 대기합니다.")
+                    self.is_active = False  # 수정
+                    
+                    # 서버에 캐시 정리 요청
+                    try:
+                        clear_response = requests.post(self.clear_cache_url, timeout=self.api_timeout)
+                        if clear_response.status_code == 200:
+                            self.get_logger().info("🧹 서버 메모리 캐시 정리 완료")
+                    except Exception as e:
+                        self.get_logger().warn(f"⚠️ 캐시 정리 실패: {e}")
+            else:
                 self.error_count += 1
                 self.get_logger().error(
-                    f"⏱️  API request timeout after {self.api_timeout}s"
-                )
-            except requests.exceptions.ConnectionError:
-                self.error_count += 1
-                self.get_logger().error(
-                    f"🔌 Connection error: Could not connect to {self.api_url}"
-                )
-            except Exception as e:
-                self.error_count += 1
-                self.get_logger().error(f"💥 Unexpected error: {str(e)}")
-            finally:
-                self.request_pending = False
-
-        def publish_command(self, api_result, timestamp):
-            """API 응답을 ROS 2 메시지로 변환하여 publish"""
-            try:
-                # API 응답 형식에 맞게 파싱
-                # 예상 형식: {"joint_positions": [0.1, 0.2, ...], "gripper": "open"}
-                command_data = {
-                    "action": "vla_stream",
-                    "joint_positions": api_result.get("joint_positions", []),
-                    "gripper": api_result.get("gripper", "open"),
-                    "timestamp": timestamp.sec + timestamp.nanosec * 1e-9
-                }
-
-                # JSON 문자열로 변환
-                msg = String()
-                msg.data = json.dumps(command_data)
-
-                # Publish
-                self.command_publisher.publish(msg)
-
-                self.get_logger().debug(
-                    f"Published command: {len(command_data['joint_positions'])} joints"
+                    f"❌ API request failed: HTTP {response.status_code} - {response.text}"
                 )
 
-            except Exception as e:
-                self.get_logger().error(f"Failed to publish command: {str(e)}")
+        except requests.exceptions.Timeout:
+            self.error_count += 1
+            self.get_logger().error(
+                f"⏱️  API request timeout after {self.api_timeout}s"
+            )
+        except requests.exceptions.ConnectionError:
+            self.error_count += 1
+            self.get_logger().error(
+                f"🔌 Connection error: Could not connect to {self.api_url}"
+            )
+        except Exception as e:
+            self.error_count += 1
+            self.get_logger().error(f"💥 Unexpected error: {str(e)}")
+        finally:
+            self.request_pending = False
+
+    def publish_command(self, api_result, timestamp):
+        """API 응답을 ROS 2 메시지로 변환하여 publish"""
+        try:
+            # API 응답 형식에 맞게 파싱
+            # 예상 형식: {"joint_positions": [0.1, 0.2, ...], "gripper": "open"}
+            command_data = {
+                "action": "vla_stream",
+                "joint_positions": api_result.get("joint_positions", []),
+                "gripper": api_result.get("gripper", "open"),
+                "timestamp": timestamp.sec + timestamp.nanosec * 1e-9
+            }
+
+            # JSON 문자열로 변환
+            msg = String()
+            msg.data = json.dumps(command_data)
+
+            # Publish
+            self.command_publisher.publish(msg)
+
+            self.get_logger().debug(
+                f"Published command: {len(command_data['joint_positions'])} joints"
+            )
+
+        except Exception as e:
+            self.get_logger().error(f"Failed to publish command: {str(e)}")
 
 
 def main(args=None):
