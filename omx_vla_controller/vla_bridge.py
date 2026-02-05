@@ -17,7 +17,6 @@ import numpy as np
 import pydub
 from openai import OpenAI
 from dotenv import load_dotenv
-from deep_translator import GoogleTranslator
 
 # .env 파일 로드
 load_dotenv()
@@ -34,7 +33,6 @@ class VLABridgeNode(Node):
         # Whisper 및 번역기 설정
         self.whisper_key = os.getenv("WHISPER_KEY")
         self.openai_client = OpenAI(api_key=self.whisper_key)
-        self.translator = GoogleTranslator(source='ko', target='en')
         self.cv_bridge = CvBridge()
 
         # 2. 상태 제어 변수
@@ -103,7 +101,13 @@ class VLABridgeNode(Node):
                     model="whisper-1", file=f, language="ko"
                 )
             
-            self.prompt = self.translator.translate(transcript.text)
+            self.prompt = self.openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a translator. Translate the following Korean text to English. Only return the translated text, nothing else."},
+                    {"role": "user", "content": transcript.text}
+                ]
+            ).choices[0].message.content.strip()
             self.get_logger().info(f'📝 명령 확정: "{self.prompt}"')
             self.ready_to_send = True
 
