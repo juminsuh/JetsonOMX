@@ -44,6 +44,19 @@ class VLABridgeNode(Node):
         self.prompt = ""
         self.recorded_data = []
         self.request_pending = False
+        self.whisper_prompt = (
+            "토토로 인형을 집어 주세요.\n"
+            "지브리 토토로를 중앙에서 잡아요.\n"
+            "토토로 인형을 정확히 집어요.\n"
+            "\n"
+            "두산 모자를 쓴 망곰 인형을 집어 주세요.\n"
+            "망곰을 머리 쪽에서 조심히 잡아요.\n"
+            "두산 베어스 망곰을 정확히 집어요.\n"
+            "\n"
+            "하얀 야구공을 집어 주세요.\n"
+            "둥근 흰 공을 가운데에서 잡아요.\n"
+            "야구공을 놓치지 말고 집어요.\n"
+        )
 
         # 3. ROS 구독 및 발행 설정
         self.image_sub = self.create_subscription(Image, '/image_raw', self.image_callback, 10)
@@ -99,7 +112,10 @@ class VLABridgeNode(Node):
 
             with open(temp_file, "rb") as f:
                 transcript = self.openai_client.audio.transcriptions.create(
-                    model="whisper-1", file=f, language="ko"
+                    model="whisper-1",
+                    file=f,
+                    language="ko",
+                    prompt=self.whisper_prompt,
                 )
             
             self.prompt = self.openai_client.chat.completions.create(
