@@ -487,10 +487,12 @@ class NaturalCommandNode(Node):
         current_pose = self.get_current_ee_pose()
         if current_pose is None:
             return False
-
-        target_x = current_pose.pose.position.x + dx
-        target_y = current_pose.pose.position.y + dy
-        target_z = current_pose.pose.position.z + dz
+        self.get_logger().info(f"recevied dx = {dx} , dx * 10 = {dx * 10}")
+        self.get_logger().info(f"recevied dy = {dy} , dy * 10 = {dy * 10}")
+        self.get_logger().info(f"recevied dz = {dz} , dz * 10 = {dz * 10}")
+        target_x = current_pose.pose.position.x + dx * 10
+        target_y = current_pose.pose.position.y + dy * 10
+        target_z = current_pose.pose.position.z + dz * 10
 
         self.get_logger().info(
             f"🎯 Cartesian-like IK target = "
@@ -509,7 +511,7 @@ class NaturalCommandNode(Node):
                     f"{math.degrees(value):.2f}° "
                     f"(limit: {math.degrees(min_lim):.1f}° ~ {math.degrees(max_lim):.1f}°)"
                 )
-                return False
+                return False 
         return True
 
     # 회전 상태를 유지하는 함수 (계속 왼쪽으로 돌아라 같은 연속적인 움직임을 수행)
@@ -580,22 +582,15 @@ class NaturalCommandNode(Node):
 
                 if joint_positions:
                     # 5DOF 로봇 (joint1~5)
-                    traj = JointTrajectory()
-                    traj.joint_names = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5']
-                    pt = JointTrajectoryPoint()
-                    pt.positions = [float(p) for p in joint_positions[:5]]
-                    pt.time_from_start.sec = 0
-                    pt.time_from_start.nanosec = 200000000 # 0.2s (스트리밍이므로 짧게 설정)
-                    traj.points.append(pt)
-                    self.arm_pub.publish(traj)
+                    self.get_logger().info(f"request received : f{joint_positions}")
+
+                    xyz_rp = [float(p) for p in joint_positions[:5]]
+                    dx = xyz_rp[0]
+                    dy = xyz_rp[1]
+                    dz = xyz_rp[2]
+                    self.move_with_cartesian(dx,dy,dz)
                     
-                    # 내부 상태 업데이트
-                    self.current_joint1_pos = pt.positions[0]
-                    self.current_joint2_pos = pt.positions[1]
-                    self.current_joint3_pos = pt.positions[2]
-                    self.current_joint4_pos = pt.positions[3]
-                    self.current_joint5_pos = pt.positions[4]
-                
+                    self.get_logger().info("publish 완료!!")
                 if gripper_val is not None:
                     # Gripper 처리 (vla_bridge는 "open"/"close" 혹은 수치값 제공 가능)
                     pos_deg = 57.0 if gripper_val == "open" else 0.0
@@ -611,7 +606,25 @@ class NaturalCommandNode(Node):
                     # 스트리밍 모드에서는 계속 호출되므로 서버가 준비되어 있다고 가정함
                     if self.gripper_client.server_is_ready():
                         self.gripper_client.send_goal_async(goal)
+                        
+            elif cmd.get("action") == "home":
+                self.go_home_pose()
+                pos_rad = math.radians(57.0)
+                goal = GripperCommand.Goal()
+                goal.command = GripperCommandMsg()
+                goal.command.position = pos_rad
+                goal.command.max_effort = 1.0
+                self.gripper_client.wait_for_server()
+                self.gripper_client.send_goal_async(goal)
 
+                pos_rad = math.radians(0)
+                goal = GripperCommand.Goal()
+                goal.command = GripperCommandMsg()
+                goal.command.position = pos_rad
+                goal.command.max_effort = 1.0
+                self.gripper_client.wait_for_server()
+                self.gripper_client.send_goal_async(goal)
+                return
         except Exception as e:
             self.get_logger().error(f"Error in vla_bridge_command_callback: {e}")
     # -------------------------

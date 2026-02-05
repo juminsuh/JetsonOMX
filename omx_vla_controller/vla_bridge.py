@@ -145,11 +145,12 @@ class VLABridgeNode(Node):
                 # ROS 메시지 발행
                 self.publish_command(result, image_msg.header.stamp)
 
-                # 그리퍼가 닫히면(close) 요청 중단
-                if gripper_state == "close":
-                    self.get_logger().info("🔒 그리퍼가 닫혔습니다. 작업을 종료하고 대기합니다.")
-                    self.ready_to_send = False
-                    self.get_logger().info('🎹 다시 명령하려면 "q"를 누르세요.')
+                # # 그리퍼가 닫히면(close) 요청 중단
+                # if gripper_state == "close":
+                #     self.get_logger().info("🔒 그리퍼가 닫혔습니다. 작업을 종료하고 대기합니다.")
+                #     self.ready_to_send = False
+                #     self.publish_home_pose()
+                #     self.get_logger().info('🎹 다시 명령하려면 "q"를 누르세요.')
             else:
                 self.get_logger().error(f"서버 응답 에러: {response.status_code}")
 
@@ -165,6 +166,12 @@ class VLABridgeNode(Node):
             "gripper": result.get("gripper", "open"),
             "timestamp": timestamp.sec + timestamp.nanosec * 1e-9
         }
+        msg = String()
+        msg.data = json.dumps(command_data)
+        self.command_publisher.publish(msg)
+
+    def publish_home_pose(self):
+        command_data = {"action:":"home"}
         msg = String()
         msg.data = json.dumps(command_data)
         self.command_publisher.publish(msg)
