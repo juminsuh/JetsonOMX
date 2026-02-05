@@ -39,7 +39,6 @@ MODEL_ID = "openvla/openvla-7b"
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 logger.info(f"Loading OpenVLA model to {DEVICE}...")
-# 모델 로딩 (bfloat16 및 Flash Attention 2 활용 권장)
 processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
 vla = AutoModelForVision2Seq.from_pretrained(
     MODEL_ID,
@@ -190,6 +189,8 @@ async def vla_infer(request: VLARequest):
         logger.info(f"✅ VLA inference #{request_count} completed")
 
         success_count += 1
+        torch.cuda.empty_cache()
+        logger.info("🧹 CUDA cache cleared")
         
         return {
             "status": "success",
@@ -215,4 +216,3 @@ if __name__ == "__main__":
         port=8080,
         log_level="info"
     )
-
