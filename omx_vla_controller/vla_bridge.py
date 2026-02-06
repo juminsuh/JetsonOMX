@@ -134,7 +134,7 @@ class VLABridgeNode(Node):
             img_base64 = base64.b64encode(buffer).decode('utf-8')
 
             # API 전송
-            payload = {"image": img_base64, "prompt": self.prompt, "unnorm_key": "bridge_orig"}
+            payload = {"image": img_base64, "prompt": self.prompt, "unnorm_key": "libero_object"}
             response = requests.post(self.api_url, json=payload, timeout=self.api_timeout)
 
             if response.status_code == 200:

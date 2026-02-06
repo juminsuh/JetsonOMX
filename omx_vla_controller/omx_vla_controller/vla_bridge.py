@@ -151,7 +151,7 @@ class VLABridgeNode(Node):
             request_data = {
                 "image": image_base64,
                 "prompt": self.prompt,
-                "unnorm_key": "bridge_orig"
+                "unnorm_key": "libero_object"
             }
 
             # HTTP POST 요청
