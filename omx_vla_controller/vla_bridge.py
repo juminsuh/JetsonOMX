@@ -70,11 +70,16 @@ class VLABridgeNode(Node):
             if user_input.lower() == 'q':
                 if not self.is_recording:
                     self.get_logger().info('🔴 [음성 인식 시작] 말씀해 주세요...')
-                    self.ready_to_send = False 
+                    self.ready_to_send = False
                     self.recorded_data = []
                     self.is_recording = True
                     time.sleep(5.0)
                     self.process_voice_to_prompt()
+            elif user_input.strip():
+                # 텍스트 명령어 직접 입력 (영어, 오디오 없이)
+                self.is_recording = False
+                self.ready_to_send = False
+                self.process_text_to_prompt(user_input.strip())
 
     def audio_callback(self, msg):
         if self.is_recording:
@@ -114,6 +119,12 @@ class VLABridgeNode(Node):
         finally:
             if os.path.exists(temp_file): os.remove(temp_file)
 
+    def process_text_to_prompt(self, text: str):
+        """영어 텍스트 명령어를 그대로 사용"""
+        self.get_logger().info('⬛ 텍스트 명령 수신...')
+        self.prompt = text
+        self.get_logger().info(f'📝 명령 확정: "{self.prompt}"')
+        self.ready_to_send = True
     def image_callback(self, msg):
         with self.image_lock:
             self.latest_image = msg
