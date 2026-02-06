@@ -35,7 +35,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # openvla 설정 및 로드
-MODEL_ID = "openvla/openvla-7b"
+MODEL_ID = "openvla/openvla-7b-finetuned-libero-object"
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 logger.info(f"Loading OpenVLA model to {DEVICE}...")
@@ -54,7 +54,7 @@ class VLARequest(BaseModel):
     """OpenVLA 요청 모델"""
     image: str # Base64 인코딩된 이미지
     prompt: str
-    unnorm_key: str = "bridge_orig"
+    unnorm_key: str = "libero_object"
 
 # fastapi
 app = FastAPI(

@@ -27,7 +27,9 @@ class VLABridgeNode(Node):
 
         # 1. 파라미터 및 설정
         self.declare_parameter('api_url', 'http://100.82.52.106:8080/api/vla/infer')
+        self.declare_parameter('unnorm_key', 'libero_object')
         self.api_url = self.get_parameter('api_url').value
+        self.unnorm_key = self.get_parameter('unnorm_key').value
         self.clear_cache_url = self.api_url.replace('/infer', '/clear_cache')  # 추가
         self.api_timeout = 5.0
         
@@ -154,7 +156,7 @@ class VLABridgeNode(Node):
             img_base64 = base64.b64encode(buffer).decode('utf-8')
 
             # API 전송
-            payload = {"image": img_base64, "prompt": self.prompt, "unnorm_key": "bridge_orig"}
+            payload = {"image": img_base64, "prompt": self.prompt, "unnorm_key": self.unnorm_key}
             response = requests.post(self.api_url, json=payload, timeout=self.api_timeout)
 
             if response.status_code == 200:

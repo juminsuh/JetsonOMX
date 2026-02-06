@@ -15,7 +15,7 @@ img_base64 = base64.b64encode(buffer).decode('utf-8')
 payload = {
     "image": img_base64,
     "prompt": "Pick up the red block",
-    "unnorm_key": "bridge_orig"
+    "unnorm_key": "libero_object"
 }
 
 print(f"서버({url})로 요청을 보냅니다...")
