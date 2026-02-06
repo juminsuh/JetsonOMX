@@ -17,7 +17,6 @@ import numpy as np
 import pydub
 from openai import OpenAI
 from dotenv import load_dotenv
-from deep_translator import GoogleTranslator
 
 # .env 파일 로드
 load_dotenv()
@@ -28,13 +27,14 @@ class VLABridgeNode(Node):
 
         # 1. 파라미터 및 설정
         self.declare_parameter('api_url', 'http://100.82.52.106:8080/api/vla/infer')
+        self.declare_parameter('stt_prompt', 'The audio is in Korean. The content is about robot arm pick-and-place commands.')
         self.api_url = self.get_parameter('api_url').value
+        self.stt_prompt = self.get_parameter('stt_prompt').value.strip()
         self.api_timeout = 5.0
         
         # Whisper 및 번역기 설정
         self.whisper_key = os.getenv("WHISPER_KEY")
         self.openai_client = OpenAI(api_key=self.whisper_key)
-        self.translator = GoogleTranslator(source='ko', target='en')
         self.cv_bridge = CvBridge()
 
         # 2. 상태 제어 변수
@@ -99,12 +99,13 @@ class VLABridgeNode(Node):
             ).export(temp_file, format="mp3")
 
             with open(temp_file, "rb") as f:
-                transcript = self.openai_client.audio.transcriptions.create(
-                    model="whisper-1", file=f, language="ko"
-                )
-            
-            self.get_logger().info(f"whisper output : {transcript.text}")
-            self.prompt = self.translator.translate(transcript.text)
+                req = {"model": "whisper-1", "file": f}
+                if self.stt_prompt:
+                    req["prompt"] = self.stt_prompt
+                translation = self.openai_client.audio.translations.create(**req)
+
+            self.get_logger().info(f"whisper translation : {translation.text}")
+            self.prompt = translation.text
             self.get_logger().info(f'📝 명령 확정: "{self.prompt}"')
             self.ready_to_send = True
 
