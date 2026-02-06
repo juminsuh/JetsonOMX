@@ -34,19 +34,36 @@ tf.config.set_visible_devices([], 'GPU') # TF는 GPU를 잡지 않도록 설정
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# TF32 가속 (Ampere 이상에서 matmul 속도 향상)
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+try:
+    torch.set_float32_matmul_precision("high")
+except Exception:
+    pass
+
 # openvla 설정 및 로드
 MODEL_ID = "openvla/openvla-7b-finetuned-libero-object"
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 logger.info(f"Loading OpenVLA model to {DEVICE}...")
 processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
-vla = AutoModelForVision2Seq.from_pretrained(
-    MODEL_ID,
-    # attn_implementation="flash_attention_2",  # 환경에 따라 "eager"로 변경 가능
-    torch_dtype=torch.bfloat16,
-    low_cpu_mem_usage=True,
-    trust_remote_code=True
-).to(DEVICE)
+def _load_vla_model(attn_impl: str):
+    return AutoModelForVision2Seq.from_pretrained(
+        MODEL_ID,
+        attn_implementation=attn_impl,
+        torch_dtype=torch.float16,
+        low_cpu_mem_usage=True,
+        trust_remote_code=True
+    )
+
+try:
+    vla = _load_vla_model("flash_attention_2").to(DEVICE)
+    logger.info("Using attention implementation: flash_attention_2")
+except Exception as e:
+    logger.warning(f"flash_attention_2 load failed ({e}); falling back to sdpa")
+    vla = _load_vla_model("sdpa").to(DEVICE)
+    logger.info("Using attention implementation: sdpa")
 logger.info("🥳 OpenVLA model loaded successfully!")
 
     
@@ -181,7 +198,7 @@ async def vla_infer(request: VLARequest):
         pil_image = process_vla_image(rgb_image, resize_size=(224, 224)) # PIL Image
         
         prompt = f"In: {request.prompt}\nOut:"
-        inputs = processor(prompt, pil_image).to(DEVICE, dtype=torch.bfloat16)
+        inputs = processor(prompt, pil_image).to(DEVICE, dtype=torch.float16)
         
         with torch.inference_mode():
             action = vla.predict_action(**inputs, unnorm_key=request.unnorm_key, do_sample=False)
